@@ -52,6 +52,34 @@ export function ensureExecution(value: ExecutionResult): ExecutionResult {
   return value;
 }
 
+export const routeJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["complexity", "outcome", "reason"],
+  properties: {
+    complexity: { type: "string", enum: ["simple", "complex"] },
+    outcome: { type: "string", enum: ["execute", "needs_human"] },
+    reason: { type: "string" },
+    humanAction: { type: "string" },
+  },
+};
+
+export const executionJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["outcome", "summary", "result", "verification"],
+  properties: {
+    outcome: {
+      type: "string",
+      enum: ["ready_for_review", "needs_human"],
+    },
+    summary: { type: "string" },
+    result: { type: "string" },
+    verification: { type: "array", items: { type: "string" } },
+    humanAction: { type: "string" },
+  },
+};
+
 export const routerSystem =
   "You route Linear work. Return JSON only. Choose needs_human when credentials, approval, missing requirements, physical action, or an unavailable repository/runtime is required. Never claim work was performed.";
 
@@ -65,4 +93,3 @@ export const executorSystem =
 export function executorPrompt(issue: LinearIssue, route: RouteDecision): string {
   return `Resolve what can safely be resolved from the issue text. JSON schema: {"outcome":"ready_for_review|needs_human","summary":"...","result":"...","verification":["..."],"humanAction":"optional"}.\nRouter reason: ${route.reason}\nIssue: ${issue.identifier}\nTitle: ${issue.title}\nDescription:\n${issue.description ?? "(none)"}`;
 }
-

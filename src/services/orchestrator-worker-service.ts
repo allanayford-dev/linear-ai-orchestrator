@@ -17,7 +17,9 @@ import type {
 import type { LinearClient } from "./linear-client.js";
 import type { ModelClient } from "./model-client.js";
 import {
+  ModelOutputError,
   ProviderConfigurationError,
+  ProviderRequestError,
   RetryableProviderError,
 } from "./provider-errors.js";
 
@@ -146,7 +148,11 @@ export class OrchestratorWorkerService {
       return result;
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
-      await this.repository.failGeneration(context.generationId, failure);
+      await this.repository.failGeneration(
+        context,
+        failure,
+        failure instanceof ModelOutputError ? failure.result : undefined,
+      );
       throw failure;
     }
   }
@@ -390,6 +396,28 @@ export class OrchestratorWorkerService {
           event.deliveryId,
           `${provider} rejected the request because its authentication, account, or payment configuration is incomplete.`,
           "Verify the provider credential and account configuration, then move the issue back to Todo.",
+        );
+      }
+      if (failure instanceof ProviderRequestError || failure.name === "ProviderRequestError") {
+        const provider = failure instanceof ProviderRequestError
+          ? failure.provider
+          : "The configured AI provider";
+        return this.handOff(
+          issue,
+          event.deliveryId,
+          `${provider} permanently rejected the model request. It will not be retried automatically.`,
+          "Review the selected model and structured-output configuration, then move the issue back to Todo.",
+        );
+      }
+      if (failure instanceof ModelOutputError || failure.name === "ModelOutputError") {
+        const provider = failure instanceof ModelOutputError
+          ? `${failure.provider}/${failure.model}`
+          : "The selected model";
+        return this.handOff(
+          issue,
+          event.deliveryId,
+          `${provider} returned output that did not satisfy the required structured response contract. The call was recorded and will not be retried automatically.`,
+          "Review the provider/model configuration or retry the issue manually by moving it back to Todo.",
         );
       }
       await this.repository.failTask(issue.id, event.deliveryId, failure);

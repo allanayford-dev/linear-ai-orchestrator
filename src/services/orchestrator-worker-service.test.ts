@@ -10,7 +10,11 @@ import type {
 } from "../types/worker.js";
 import type { LinearClient } from "./linear-client.js";
 import type { ModelClient } from "./model-client.js";
-import { RetryableProviderError } from "./provider-errors.js";
+import {
+  ModelOutputError,
+  ProviderRequestError,
+  RetryableProviderError,
+} from "./provider-errors.js";
 import { OrchestratorWorkerService } from "./orchestrator-worker-service.js";
 
 const config: WorkerConfig = {
@@ -244,6 +248,61 @@ describe("OrchestratorWorkerService", () => {
     expect(h.gemini.execute).not.toHaveBeenCalled();
     expect(h.paidAi.route).toHaveBeenCalledTimes(1);
     expect(h.paidAi.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands malformed paid output to the user without a Pub/Sub retry", async () => {
+    const h = harness(
+      issue(),
+      { complexity: "complex", outcome: "execute", reason: "Complex" },
+    );
+    const failedResult = {
+      rawText: "This is not JSON",
+      providerRequestId: "failed-request",
+      usage: modelResult({}).usage,
+    };
+    vi.mocked(h.paidAi.execute).mockRejectedValue(
+      new ModelOutputError(
+        "Invalid structured output",
+        "vercel-ai-gateway",
+        "zai/glm-5.2",
+        failedResult,
+      ),
+    );
+
+    await expect(h.service.handle(event)).resolves.toMatchObject({
+      outcome: "needs_action",
+    });
+    expect(h.paidAi.execute).toHaveBeenCalledTimes(1);
+    expect(h.repository.failGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "vercel-ai-gateway", model: "zai/glm-5.2" }),
+      expect.objectContaining({ name: "ModelOutputError" }),
+      failedResult,
+    );
+    expect(h.repository.failTask).not.toHaveBeenCalled();
+    expect(h.transitions).toEqual(["In Progress", "Needs My Action"]);
+    expect(h.comments[0]).toContain("will not be retried automatically");
+  });
+
+  it("hands a permanently rejected provider request to the user", async () => {
+    const h = harness(issue(), {
+      complexity: "simple",
+      outcome: "execute",
+      reason: "Simple",
+    });
+    vi.mocked(h.gemini.route).mockRejectedValue(
+      new ProviderRequestError(
+        "response schema unsupported",
+        "google-gemini",
+        400,
+      ),
+    );
+
+    await expect(h.service.handle(event)).resolves.toMatchObject({
+      outcome: "needs_action",
+    });
+    expect(h.repository.failTask).not.toHaveBeenCalled();
+    expect(h.transitions).toEqual(["In Progress", "Needs My Action"]);
+    expect(h.comments[0]).toContain("will not be retried automatically");
   });
 
   it("resumes the original delivery without changing In Progress again", async () => {

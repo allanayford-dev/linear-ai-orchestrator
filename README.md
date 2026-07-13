@@ -19,6 +19,8 @@ orchestrating Todo issues through Google Cloud Pub/Sub.
 - Opt-in free-tier routing and simple execution with `gemini-3.1-flash-lite`
 - One-time fallback to `zai/glm-4.7-flashx` for Gemini quota/service failures
 - Complex execution with `zai/glm-5.2`
+- JSON Schema-constrained provider responses for predictable routing and results
+- Permanent handoff (without Pub/Sub retry) for malformed model output or rejected requests
 - Sensitive-label protection that keeps `ai-sensitive` work away from Gemini
 - Human handoff to `Needs My Action`
 - Candidate results to `In Review` (never automatically `Done`)
@@ -45,7 +47,8 @@ reserves some such paths and can intercept them before they reach the container.
 
 Costs use integer micro-dollars. Every provider attempt has its own deterministic
 generation ID and is recorded as pending before the model request, then completed
-or failed. Gemini free-tier calls still count toward task token limits.
+or failed. Billable usage is counted even when a provider call returns malformed
+structured output. Gemini free-tier calls still count toward task token limits.
 
 ## Worker deployment
 

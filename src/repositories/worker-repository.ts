@@ -7,6 +7,7 @@ import type {
 } from "../types/worker.js";
 
 export type ClaimResult = "claimed" | "duplicate" | "busy";
+export type FailedGenerationResult = Omit<ModelResult<unknown>, "value">;
 
 export interface GenerationContext {
   generationId: string;
@@ -32,7 +33,11 @@ export interface WorkerRepository {
   getCompletedGeneration<T>(generationId: string): Promise<ModelResult<T> | null>;
   startGeneration(context: GenerationContext): Promise<void>;
   completeGeneration<T>(context: GenerationContext, result: ModelResult<T>): Promise<void>;
-  failGeneration(generationId: string, error: Error): Promise<void>;
+  failGeneration(
+    context: GenerationContext,
+    error: Error,
+    result?: FailedGenerationResult,
+  ): Promise<void>;
   assertWithinBudget(
     taskId: string,
     projectId: string,

@@ -8,15 +8,19 @@ import type {
 import {
   ensureExecution,
   ensureRoute,
+  executionJsonSchema,
   executorPrompt,
   executorSystem,
   parseJson,
+  routeJsonSchema,
   routerPrompt,
   routerSystem,
   type ModelClient,
 } from "./model-client.js";
 import {
+  ModelOutputError,
   ProviderConfigurationError,
+  ProviderRequestError,
   RetryableProviderError,
 } from "./provider-errors.js";
 
@@ -45,29 +49,6 @@ interface GeminiModels {
   }): Promise<GeminiResponse>;
 }
 
-const routeSchema = {
-  type: "object",
-  required: ["complexity", "outcome", "reason"],
-  properties: {
-    complexity: { type: "string", enum: ["simple", "complex"] },
-    outcome: { type: "string", enum: ["execute", "needs_human"] },
-    reason: { type: "string" },
-    humanAction: { type: "string" },
-  },
-};
-
-const executionSchema = {
-  type: "object",
-  required: ["outcome", "summary", "result", "verification"],
-  properties: {
-    outcome: { type: "string", enum: ["ready_for_review", "needs_human"] },
-    summary: { type: "string" },
-    result: { type: "string" },
-    verification: { type: "array", items: { type: "string" } },
-    humanAction: { type: "string" },
-  },
-};
-
 function mapError(error: unknown): Error {
   if (!(error instanceof ApiError)) {
     return error instanceof Error ? error : new Error(String(error));
@@ -78,6 +59,9 @@ function mapError(error: unknown): Error {
   }
   if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) {
     return new RetryableProviderError(error.message, "google-gemini", status);
+  }
+  if (status === 400 || status === 404 || status === 422) {
+    return new ProviderRequestError(error.message, "google-gemini", status);
   }
   return error;
 }
@@ -113,14 +97,12 @@ export class GeminiClient implements ModelClient {
       throw mapError(error);
     }
 
-    const rawText = response.text?.trim();
-    if (!rawText) throw new Error("Gemini returned no text");
+    const rawText = response.text?.trim() ?? "";
     const usage = response.usageMetadata;
     const inputTokens = usage?.promptTokenCount ?? 0;
     const reasoningTokens = usage?.thoughtsTokenCount ?? 0;
     const outputTokens = usage?.candidatesTokenCount ?? 0;
-    return {
-      value: validate(parseJson<T>(rawText)),
+    const result = {
       rawText,
       providerRequestId: response.responseId ?? null,
       usage: {
@@ -133,6 +115,18 @@ export class GeminiClient implements ModelClient {
         pricing: { inputPerToken: 0, outputPerToken: 0 },
       },
     };
+    try {
+      if (!rawText) throw new Error("Gemini returned no text");
+      return { ...result, value: validate(parseJson<T>(rawText)) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ModelOutputError(
+        `Gemini returned invalid structured output: ${message}`,
+        "google-gemini",
+        model,
+        result,
+      );
+    }
   }
 
   route(issue: LinearIssue, model: string): Promise<ModelResult<RouteDecision>> {
@@ -140,7 +134,7 @@ export class GeminiClient implements ModelClient {
       model,
       routerSystem,
       routerPrompt(issue),
-      routeSchema,
+      routeJsonSchema,
       ensureRoute,
     );
   }
@@ -154,7 +148,7 @@ export class GeminiClient implements ModelClient {
       model,
       executorSystem,
       executorPrompt(issue, route),
-      executionSchema,
+      executionJsonSchema,
       ensureExecution,
     );
   }

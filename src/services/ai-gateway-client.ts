@@ -7,14 +7,20 @@ import type {
 import {
   ensureExecution,
   ensureRoute,
+  executionJsonSchema,
   executorPrompt,
   executorSystem,
   parseJson,
+  routeJsonSchema,
   routerPrompt,
   routerSystem,
   type ModelClient,
 } from "./model-client.js";
-import { ProviderConfigurationError } from "./provider-errors.js";
+import {
+  ModelOutputError,
+  ProviderConfigurationError,
+  ProviderRequestError,
+} from "./provider-errors.js";
 
 interface ChatResponse {
   id?: string;
@@ -77,6 +83,8 @@ export class VercelAiGatewayClient implements ModelClient {
     model: string,
     system: string,
     prompt: string,
+    schemaName: string,
+    responseJsonSchema: object,
     validate: (value: T) => T,
   ): Promise<ModelResult<T>> {
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -90,6 +98,13 @@ export class VercelAiGatewayClient implements ModelClient {
         model,
         temperature: 0.1,
         max_tokens: 2500,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: schemaName,
+            schema: responseJsonSchema,
+          },
+        },
         messages: [
           { role: "system", content: system },
           { role: "user", content: prompt },
@@ -112,20 +127,27 @@ export class VercelAiGatewayClient implements ModelClient {
           "vercel-ai-gateway",
           response.status,
         );
+      } else if (
+        response.status === 400 ||
+        response.status === 404 ||
+        response.status === 422
+      ) {
+        error = new ProviderRequestError(
+          message,
+          "vercel-ai-gateway",
+          response.status,
+        );
       }
       throw error;
     }
-    const rawText = body.choices?.[0]?.message?.content;
-    if (!rawText) throw new Error("AI Gateway returned no text");
-    const value = validate(parseJson<T>(rawText));
+    const rawText = body.choices?.[0]?.message?.content?.trim() ?? "";
     const inputTokens = body.usage?.prompt_tokens ?? 0;
     const outputTokens = body.usage?.completion_tokens ?? 0;
     const pricing = await this.pricing(model);
     const estimatedCostMicros = pricing
       ? Math.round((inputTokens * pricing.inputPerToken + outputTokens * pricing.outputPerToken) * 1_000_000)
       : 0;
-    return {
-      value,
+    const result = {
       rawText,
       providerRequestId: body.id ?? null,
       usage: {
@@ -137,6 +159,18 @@ export class VercelAiGatewayClient implements ModelClient {
         pricing,
       },
     };
+    try {
+      if (!rawText) throw new Error("AI Gateway returned no text");
+      return { ...result, value: validate(parseJson<T>(rawText)) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ModelOutputError(
+        `AI Gateway returned invalid structured output: ${message}`,
+        "vercel-ai-gateway",
+        model,
+        result,
+      );
+    }
   }
 
   route(issue: LinearIssue, model: string): Promise<ModelResult<RouteDecision>> {
@@ -144,6 +178,8 @@ export class VercelAiGatewayClient implements ModelClient {
       model,
       routerSystem,
       routerPrompt(issue),
+      "linear_route_decision",
+      routeJsonSchema,
       ensureRoute,
     );
   }
@@ -153,6 +189,8 @@ export class VercelAiGatewayClient implements ModelClient {
       model,
       executorSystem,
       executorPrompt(issue, route),
+      "linear_execution_result",
+      executionJsonSchema,
       ensureExecution,
     );
   }
