@@ -82,6 +82,7 @@ export class FirestoreWorkerRepository implements WorkerRepository {
         reasoningTokens: usage.reasoningTokens,
         totalTokens: usage.totalTokens,
         estimatedCostMicros: usage.estimatedCostMicros,
+        costSource: usage.costSource ?? "unknown",
         usageCounted: true,
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });

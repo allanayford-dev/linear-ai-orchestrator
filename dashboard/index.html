@@ -120,9 +120,9 @@
             </article>
             <article class="panel">
               <div class="panel-heading"><span>Actual external costs</span></div>
-              <p class="muted compact">Enter billed amounts. The dashboard uses the greater of Gateway actual and internal AI estimate, preventing double-counting.</p>
+              <p class="muted compact">Enter independent billed amounts. The dashboard uses the greater of the Vercel CSV total and recorded per-request AI cost, preventing double-counting.</p>
               <p id="gateway-sync-control" class="muted compact"></p>
-              <label>Vercel AI Gateway (USD)<input id="gateway-cost" type="number" min="0" step="0.000001" /></label>
+              <label>Vercel CSV reconciliation (USD)<input id="gateway-cost" type="number" min="0" step="0.000001" /></label>
               <label>Google Cloud (USD)<input id="gcp-cost" type="number" min="0" step="0.01" /></label>
               <label>Other hosting/providers (USD)<input id="other-cost" type="number" min="0" step="0.01" /></label>
               <button id="save-costs" class="secondary-button">Update actual costs</button>

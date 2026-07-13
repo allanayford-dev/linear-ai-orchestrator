@@ -81,9 +81,39 @@ describe("VercelAiGatewayClient", () => {
           inputTokens: 100,
           outputTokens: 50,
           totalTokens: 150,
+          estimatedCostMicros: 26,
+          costSource: "model-catalog",
         },
       },
     });
+  });
+
+  it("uses the exact cost returned by AI Gateway without a catalog lookup", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      id: "generation-cost",
+      choices: [{ message: { content: JSON.stringify({
+        complexity: "simple",
+        outcome: "execute",
+        reason: "Small task",
+      }) } }],
+      usage: {
+        prompt_tokens: 196,
+        completion_tokens: 363,
+        total_tokens: 559,
+        cost: "0.001839",
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new VercelAiGatewayClient("test-key");
+
+    const result = await client.route(issue, "zai/glm-5.2");
+
+    expect(result.usage).toMatchObject({
+      estimatedCostMicros: 1_839,
+      costSource: "gateway-response",
+      pricing: null,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("classifies an unsupported structured-output request as permanent", async () => {

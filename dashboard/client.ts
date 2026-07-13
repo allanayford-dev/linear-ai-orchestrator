@@ -15,14 +15,6 @@ interface DashboardData {
   month: string;
   paidAiCircuitBreakerMicros: number;
   paidAiPaused: boolean;
-  gatewaySync: {
-    status: string;
-    error: string | null;
-    syncedAt: string | null;
-    startDate: string | null;
-    endDate: string | null;
-    requestCount: number;
-  };
   budget: {
     estimatedAiCostMicros: number;
     gatewayActualCostMicros: number;
@@ -112,7 +104,7 @@ function taskTable(tasks: RecordValue[], limit?: number) {
 
 function generationTable(generations: RecordValue[]) {
   if (!generations.length) return '<div class="empty">No model generations recorded yet.</div>';
-  return `<table><thead><tr><th>Issue</th><th>Role</th><th>Provider / model</th><th>Status</th><th>Tokens</th><th>Cost</th><th>Updated</th></tr></thead><tbody>${generations.map((item) => `
+  return `<table><thead><tr><th>Issue</th><th>Role</th><th>Provider / model</th><th>Status</th><th>Tokens</th><th>Cost</th><th>Cost source</th><th>Updated</th></tr></thead><tbody>${generations.map((item) => `
     <tr>
       <td>${html(item.issueIdentifier)}</td>
       <td>${html(item.role)}</td>
@@ -120,6 +112,7 @@ function generationTable(generations: RecordValue[]) {
       <td><span class="chip ${statusClass(item.status)}">${html(item.status)}</span></td>
       <td>${integer(item.totalTokens)}</td>
       <td>${dollars(Number(item.estimatedCostMicros ?? 0), 6)}</td>
+      <td>${html(item.costSource ?? "legacy estimate")}</td>
       <td>${html(timestamp(item.updatedAt))}</td>
     </tr>`).join("")}</tbody></table>`;
 }
@@ -177,16 +170,12 @@ function render(data: DashboardData) {
     : '<div class="empty">No model usage this month.</div>';
 
   byId("cost-sources").innerHTML = [
-    ["AI effective", budget.effectiveAiCostMicros],
-    ["Gateway actual", budget.gatewayActualCostMicros],
+    ["AI recorded", budget.effectiveAiCostMicros],
+    ["CSV reconciliation", budget.gatewayActualCostMicros],
     ["Google Cloud", budget.gcpCostMicros],
     ["Other", budget.otherCostMicros],
   ].map(([label, value]) => `<div class="stack-row"><span>${label}</span><strong>${dollars(Number(value), 6)}</strong></div>`).join("");
-  const syncCopy = data.gatewaySync.status === "error"
-    ? `Vercel sync needs attention: ${data.gatewaySync.error || "reporting request failed"}`
-    : data.gatewaySync.syncedAt
-      ? `Vercel synced ${timestamp(data.gatewaySync.syncedAt)} · ${integer(data.gatewaySync.requestCount)} requests · ${data.gatewaySync.startDate} to ${data.gatewaySync.endDate}`
-      : "Vercel actual cost has not been synced automatically yet.";
+  const syncCopy = "Vercel cost is captured after every orchestrator request. Use a Vercel CSV total here for an independent reconciliation check.";
   byId("gateway-sync").textContent = syncCopy;
   byId("gateway-sync-control").textContent = syncCopy;
 

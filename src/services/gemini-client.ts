@@ -112,6 +112,7 @@ export class GeminiClient implements ModelClient {
         totalTokens:
           usage?.totalTokenCount ?? inputTokens + outputTokens + reasoningTokens,
         estimatedCostMicros: 0,
+        costSource: "free-tier" as const,
         pricing: { inputPerToken: 0, outputPerToken: 0 },
       },
     };

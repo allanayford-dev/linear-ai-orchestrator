@@ -43,6 +43,7 @@ describe("GeminiClient", () => {
       reasoningTokens: 5,
       totalTokens: 35,
       estimatedCostMicros: 0,
+      costSource: "free-tier",
       pricing: { inputPerToken: 0, outputPerToken: 0 },
     });
     expect(generateContent).toHaveBeenCalledWith(expect.objectContaining({

@@ -7,8 +7,6 @@ function repository(): DashboardRepository {
     getDashboard: vi.fn(),
     updateBudget: vi.fn(),
     updateExternalCosts: vi.fn(),
-    syncGatewayCost: vi.fn(),
-    recordGatewaySyncFailure: vi.fn(),
   };
 }
 
