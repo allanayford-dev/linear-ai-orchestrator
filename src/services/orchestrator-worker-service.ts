@@ -7,21 +7,64 @@ import type {
 import type {
   ExecutionResult,
   LinearIssue,
+  ModelProvider,
   ModelResult,
   ModelRole,
+  PricingTier,
   RouteDecision,
   WorkEvent,
 } from "../types/worker.js";
-import type { AiGatewayClient } from "./ai-gateway-client.js";
 import type { LinearClient } from "./linear-client.js";
+import type { ModelClient } from "./model-client.js";
+import {
+  ProviderConfigurationError,
+  RetryableProviderError,
+} from "./provider-errors.js";
 
 export interface WorkerOutcome {
   outcome: "ignored" | "duplicate" | "busy" | "needs_action" | "in_review";
   reason?: string;
 }
 
-function generationId(deliveryId: string, role: ModelRole): string {
-  return createHash("sha256").update(`${deliveryId}:${role}`).digest("hex");
+interface AttemptSpec {
+  provider: ModelProvider;
+  model: string;
+  pricingTier: PricingTier;
+  client: ModelClient;
+}
+
+interface ModelCall {
+  provider: ModelProvider;
+  model: string;
+  pricingTier: PricingTier;
+  attempt: number;
+  result: ModelResult<unknown>;
+}
+
+function modelCall<T>(
+  spec: AttemptSpec,
+  attempt: number,
+  result: ModelResult<T>,
+): ModelCall & { result: ModelResult<T> } {
+  return {
+    provider: spec.provider,
+    model: spec.model,
+    pricingTier: spec.pricingTier,
+    attempt,
+    result,
+  };
+}
+
+function generationId(
+  deliveryId: string,
+  role: ModelRole,
+  attempt: number,
+  provider: ModelProvider,
+  model: string,
+): string {
+  return createHash("sha256")
+    .update(`${deliveryId}:${role}:${attempt}:${provider}:${model}`)
+    .digest("hex");
 }
 
 function issueIdFrom(event: WorkEvent): string | null {
@@ -29,10 +72,18 @@ function issueIdFrom(event: WorkEvent): string | null {
   return typeof id === "string" && id ? id : null;
 }
 
-function usageLine(results: Array<{ model: string; result: ModelResult<unknown> }>): string {
-  const tokens = results.reduce((sum, item) => sum + item.result.usage.totalTokens, 0);
-  const micros = results.reduce((sum, item) => sum + item.result.usage.estimatedCostMicros, 0);
-  const models = [...new Set(results.map((item) => item.model))].join(", ");
+function usageLine(results: ModelCall[]): string {
+  const tokens = results.reduce(
+    (sum, item) => sum + item.result.usage.totalTokens,
+    0,
+  );
+  const micros = results.reduce(
+    (sum, item) => sum + item.result.usage.estimatedCostMicros,
+    0,
+  );
+  const models = [...new Set(results.map(
+    (item) => `${item.provider}/${item.model} (${item.pricingTier})`,
+  ))].join(", ");
   return `Models: ${models} · Tokens: ${tokens} · Estimated AI cost: $${(micros / 1_000_000).toFixed(6)}`;
 }
 
@@ -41,23 +92,34 @@ export class OrchestratorWorkerService {
     private readonly config: WorkerConfig,
     private readonly repository: WorkerRepository,
     private readonly linear: LinearClient,
-    private readonly ai: AiGatewayClient,
+    private readonly gemini: ModelClient,
+    private readonly paidAi: ModelClient,
   ) {}
 
   private context(
     issue: LinearIssue,
     deliveryId: string,
     role: ModelRole,
-    model: string,
+    attempt: number,
+    spec: AttemptSpec,
   ): GenerationContext {
     return {
-      generationId: generationId(deliveryId, role),
+      generationId: generationId(
+        deliveryId,
+        role,
+        attempt,
+        spec.provider,
+        spec.model,
+      ),
       taskId: issue.id,
       issueIdentifier: issue.identifier,
       projectId: issue.project?.id ?? "unassigned",
       projectName: issue.project?.name ?? "Unassigned",
-      model,
+      provider: spec.provider,
+      model: spec.model,
+      pricingTier: spec.pricingTier,
       role,
+      attempt,
       deliveryId,
     };
   }
@@ -66,13 +128,16 @@ export class OrchestratorWorkerService {
     context: GenerationContext,
     call: () => Promise<ModelResult<T>>,
   ): Promise<ModelResult<T>> {
-    const cached = await this.repository.getCompletedGeneration<T>(context.generationId);
+    const cached = await this.repository.getCompletedGeneration<T>(
+      context.generationId,
+    );
     if (cached) return cached;
     await this.repository.assertWithinBudget(
       context.taskId,
       context.projectId,
       this.config.maxTaskCostMicros,
       this.config.maxProjectMonthlyCostMicros,
+      this.config.maxTaskTokens,
     );
     await this.repository.startGeneration(context);
     try {
@@ -84,6 +149,74 @@ export class OrchestratorWorkerService {
       await this.repository.failGeneration(context.generationId, failure);
       throw failure;
     }
+  }
+
+  private async generateWithFallback<T>(
+    issue: LinearIssue,
+    deliveryId: string,
+    role: ModelRole,
+    primary: AttemptSpec,
+    fallback: AttemptSpec | null,
+    call: (client: ModelClient, model: string) => Promise<ModelResult<T>>,
+  ): Promise<ModelCall & { result: ModelResult<T> }> {
+    const primaryContext = this.context(issue, deliveryId, role, 1, primary);
+    const fallbackContext = fallback
+      ? this.context(issue, deliveryId, role, 2, fallback)
+      : null;
+
+    if (fallbackContext && fallback) {
+      const cachedFallback = await this.repository.getCompletedGeneration<T>(
+        fallbackContext.generationId,
+      );
+      if (cachedFallback) {
+        return modelCall(fallback, 2, cachedFallback);
+      }
+    }
+    const cachedPrimary = await this.repository.getCompletedGeneration<T>(
+      primaryContext.generationId,
+    );
+    if (cachedPrimary) {
+      return modelCall(primary, 1, cachedPrimary);
+    }
+
+    try {
+      const result = await this.generate(
+        primaryContext,
+        () => call(primary.client, primary.model),
+      );
+      return modelCall(primary, 1, result);
+    } catch (error) {
+      if (
+        !(error instanceof RetryableProviderError) ||
+        !fallback ||
+        !fallbackContext
+      ) {
+        throw error;
+      }
+      const result = await this.generate(
+        fallbackContext,
+        () => call(fallback.client, fallback.model),
+      );
+      return modelCall(fallback, 2, result);
+    }
+  }
+
+  private geminiEligible(issue: LinearIssue): boolean {
+    if (!issue.project || this.config.geminiAllowedProjects.length === 0) {
+      return false;
+    }
+    const allowed = new Set(
+      this.config.geminiAllowedProjects.map((value) => value.toLowerCase()),
+    );
+    const projectAllowed =
+      allowed.has(issue.project.id.toLowerCase()) ||
+      allowed.has(issue.project.name.toLowerCase());
+    if (!projectAllowed) return false;
+
+    const sensitive = new Set(
+      this.config.geminiSensitiveLabels.map((value) => value.toLowerCase()),
+    );
+    return !issue.labels.some((label) => sensitive.has(label.name.toLowerCase()));
   }
 
   private async handOff(
@@ -125,7 +258,8 @@ export class OrchestratorWorkerService {
     const issue = await this.linear.getIssue(issueId);
     const currentState = issue.state.name.toLowerCase();
     const isTodo = currentState === this.config.states.todo.toLowerCase();
-    const isInProgress = currentState === this.config.states.inProgress.toLowerCase();
+    const isInProgress =
+      currentState === this.config.states.inProgress.toLowerCase();
     if (!isTodo && !isInProgress) {
       return { outcome: "ignored", reason: `Current state is ${issue.state.name}` };
     }
@@ -139,54 +273,84 @@ export class OrchestratorWorkerService {
     if (claim !== "claimed") return { outcome: claim };
 
     try {
-      if (isTodo) await this.linear.moveIssue(issue, this.config.states.inProgress);
-      const calls: Array<{ model: string; result: ModelResult<unknown> }> = [];
-      const routerContext = this.context(issue, event.deliveryId, "router", this.config.routerModel);
-      const routed = await this.generate<RouteDecision>(
-        routerContext,
-        () => this.ai.route(issue, this.config.routerModel),
+      if (isTodo) {
+        await this.linear.moveIssue(issue, this.config.states.inProgress);
+      }
+      const calls: ModelCall[] = [];
+      const paidRouter: AttemptSpec = {
+        provider: "vercel-ai-gateway",
+        model: this.config.routerModel,
+        pricingTier: "paid",
+        client: this.paidAi,
+      };
+      const gemini: AttemptSpec = {
+        provider: "google-gemini",
+        model: this.config.geminiModel,
+        pricingTier: "free",
+        client: this.gemini,
+      };
+      const useGemini = this.geminiEligible(issue);
+      const routed = await this.generateWithFallback<RouteDecision>(
+        issue,
+        event.deliveryId,
+        "router",
+        useGemini ? gemini : paidRouter,
+        useGemini ? paidRouter : null,
+        (client, model) => client.route(issue, model),
       );
-      calls.push({ model: this.config.routerModel, result: routed });
+      calls.push(routed);
 
-      if (routed.value.outcome === "needs_human") {
+      if (routed.result.value.outcome === "needs_human") {
         return this.handOff(
           issue,
           event.deliveryId,
-          routed.value.reason,
-          routed.value.humanAction || "Add the missing information or approval, then move the issue back to Todo.",
+          routed.result.value.reason,
+          routed.result.value.humanAction ||
+            "Add the missing information or approval, then move the issue back to Todo.",
           usageLine(calls),
         );
       }
 
-      const executionModel = routed.value.complexity === "complex"
-        ? this.config.executorModel
-        : this.config.routerModel;
-      const executorContext = this.context(issue, event.deliveryId, "executor", executionModel);
-      const executed = await this.generate<ExecutionResult>(
-        executorContext,
-        () => this.ai.execute(issue, routed.value, executionModel),
+      const isComplex = routed.result.value.complexity === "complex";
+      const geminiAvailable = useGemini && routed.provider === "google-gemini";
+      const paidExecutor: AttemptSpec = {
+        provider: "vercel-ai-gateway",
+        model: isComplex ? this.config.executorModel : this.config.routerModel,
+        pricingTier: "paid",
+        client: this.paidAi,
+      };
+      const executed = await this.generateWithFallback<ExecutionResult>(
+        issue,
+        event.deliveryId,
+        "executor",
+        !isComplex && geminiAvailable ? gemini : paidExecutor,
+        !isComplex && geminiAvailable ? paidExecutor : null,
+        (client, model) => client.execute(issue, routed.result.value, model),
       );
-      calls.push({ model: executionModel, result: executed });
+      calls.push(executed);
 
-      if (executed.value.outcome === "needs_human") {
+      if (executed.result.value.outcome === "needs_human") {
         return this.handOff(
           issue,
           event.deliveryId,
-          executed.value.summary,
-          executed.value.humanAction || "Complete the external action, then move the issue back to Todo.",
+          executed.result.value.summary,
+          executed.result.value.humanAction ||
+            "Complete the external action, then move the issue back to Todo.",
           usageLine(calls),
         );
       }
 
-      const verification = executed.value.verification.length
-        ? executed.value.verification.map((item) => `- ${item}`).join("\n")
+      const verification = executed.result.value.verification.length
+        ? executed.result.value.verification
+          .map((item) => `- ${item}`)
+          .join("\n")
         : "- Review the proposed result against the acceptance criteria.";
       await this.linear.addComment(issue.id, [
         "## Orchestrator result",
         "",
-        executed.value.summary,
+        executed.result.value.summary,
         "",
-        executed.value.result,
+        executed.result.value.result,
         "",
         "### Verification",
         verification,
@@ -198,9 +362,10 @@ export class OrchestratorWorkerService {
       await this.linear.moveIssue(issue, this.config.states.review);
       await this.repository.completeTask(issue.id, event.deliveryId, "in_review", {
         linearState: this.config.states.review,
-        routeComplexity: routed.value.complexity,
-        executionModel,
-        resultSummary: executed.value.summary,
+        routeComplexity: routed.result.value.complexity,
+        executionModel: executed.model,
+        executionProvider: executed.provider,
+        resultSummary: executed.result.value.summary,
       });
       return { outcome: "in_review" };
     } catch (error) {
@@ -209,16 +374,22 @@ export class OrchestratorWorkerService {
         return this.handOff(
           issue,
           event.deliveryId,
-          "The configured AI spending limit prevented further model calls.",
+          "The configured AI spending or token limit prevented further model calls.",
           "Review the task and budget. Increase the limit only if appropriate, then move the issue back to Todo.",
         );
       }
-      if (failure.name === "ProviderConfigurationError") {
+      if (
+        failure instanceof ProviderConfigurationError ||
+        failure.name === "ProviderConfigurationError"
+      ) {
+        const provider = failure instanceof ProviderConfigurationError
+          ? failure.provider
+          : "configured AI provider";
         return this.handOff(
           issue,
           event.deliveryId,
-          "The AI provider rejected the request because its account or payment configuration is incomplete.",
-          "Add or verify the Vercel payment method and AI Gateway key, then move the issue back to Todo.",
+          `${provider} rejected the request because its authentication, account, or payment configuration is incomplete.`,
+          "Verify the provider credential and account configuration, then move the issue back to Todo.",
         );
       }
       await this.repository.failTask(issue.id, event.deliveryId, failure);

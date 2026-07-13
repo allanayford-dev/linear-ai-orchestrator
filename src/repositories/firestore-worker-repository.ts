@@ -73,7 +73,7 @@ export class FirestoreWorkerRepository implements WorkerRepository {
     const projectRef = this.firestore.collection("project_usage_monthly")
       .doc(`${documentPart(context.projectId)}_${month}`);
     const modelRef = this.firestore.collection("model_usage_monthly")
-      .doc(`${documentPart(context.model)}_${month}`);
+      .doc(`${documentPart(`${context.provider}:${context.model}`)}_${month}`);
 
     await this.firestore.runTransaction(async (transaction) => {
       const [generation, task, project, model] = await Promise.all([
@@ -90,6 +90,7 @@ export class FirestoreWorkerRepository implements WorkerRepository {
         result,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        reasoningTokens: usage.reasoningTokens,
         totalTokens: usage.totalTokens,
         estimatedCostMicros: usage.estimatedCostMicros,
         completedAt: FieldValue.serverTimestamp(),
@@ -100,6 +101,7 @@ export class FirestoreWorkerRepository implements WorkerRepository {
         modelCalls: FieldValue.increment(1),
         inputTokens: FieldValue.increment(usage.inputTokens),
         outputTokens: FieldValue.increment(usage.outputTokens),
+        reasoningTokens: FieldValue.increment(usage.reasoningTokens),
         totalTokens: FieldValue.increment(usage.totalTokens),
         estimatedCostMicros: FieldValue.increment(usage.estimatedCostMicros),
         updatedAt: FieldValue.serverTimestamp(),
@@ -119,7 +121,9 @@ export class FirestoreWorkerRepository implements WorkerRepository {
         ...increment,
       }, { merge: true });
       transaction.set(modelRef, {
+        provider: context.provider,
         model: context.model,
+        pricingTier: context.pricingTier,
         month,
         ...(!model.exists ? { createdAt: FieldValue.serverTimestamp() } : {}),
         ...increment,
@@ -137,7 +141,13 @@ export class FirestoreWorkerRepository implements WorkerRepository {
     }, { merge: true });
   }
 
-  async assertWithinBudget(taskId: string, projectId: string, maxTaskMicros: number, maxProjectMicros: number): Promise<void> {
+  async assertWithinBudget(
+    taskId: string,
+    projectId: string,
+    maxTaskMicros: number,
+    maxProjectMicros: number,
+    maxTaskTokens: number,
+  ): Promise<void> {
     const month = monthKey();
     const [task, project] = await Promise.all([
       this.firestore.collection("task_usage").doc(taskId).get(),
@@ -145,10 +155,15 @@ export class FirestoreWorkerRepository implements WorkerRepository {
         .doc(`${documentPart(projectId)}_${month}`).get(),
     ]);
     const taskCost = (task.get("estimatedCostMicros") as number | undefined) ?? 0;
+    const taskTokens = (task.get("totalTokens") as number | undefined) ?? 0;
     const projectCost = (project.get("estimatedCostMicros") as number | undefined) ?? 0;
-    if (taskCost >= maxTaskMicros || projectCost >= maxProjectMicros) {
+    if (
+      taskCost >= maxTaskMicros ||
+      projectCost >= maxProjectMicros ||
+      taskTokens >= maxTaskTokens
+    ) {
       const error = new Error(
-        `Internal AI budget reached (task $${(taskCost / 1_000_000).toFixed(4)}, project $${(projectCost / 1_000_000).toFixed(4)})`,
+        `Internal AI budget reached (task $${(taskCost / 1_000_000).toFixed(4)}, project $${(projectCost / 1_000_000).toFixed(4)}, task tokens ${taskTokens})`,
       );
       error.name = "BudgetExceededError";
       throw error;

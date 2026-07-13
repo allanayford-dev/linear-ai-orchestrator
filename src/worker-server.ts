@@ -3,6 +3,7 @@ import { createWorkerApp } from "./worker-app.js";
 import { loadWorkerConfig } from "./config/worker-env.js";
 import { FirestoreWorkerRepository } from "./repositories/firestore-worker-repository.js";
 import { VercelAiGatewayClient } from "./services/ai-gateway-client.js";
+import { GeminiClient } from "./services/gemini-client.js";
 import { LinearGraphQlClient } from "./services/linear-client.js";
 import { OrchestratorWorkerService } from "./services/orchestrator-worker-service.js";
 
@@ -16,6 +17,7 @@ const worker = new OrchestratorWorkerService(
   config,
   repository,
   new LinearGraphQlClient(config.linearApiKey),
+  new GeminiClient(config.geminiApiKey),
   new VercelAiGatewayClient(config.aiGatewayApiKey),
 );
 

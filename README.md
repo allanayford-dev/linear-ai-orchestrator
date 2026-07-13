@@ -16,12 +16,14 @@ orchestrating Todo issues through Google Cloud Pub/Sub.
 - Duplicate delivery protection using `Linear-Delivery`
 - Private Pub/Sub push worker with Firestore task leases
 - `Todo` -> `In Progress` claims
-- Low-cost routing with `zai/glm-4.7-flashx`
+- Opt-in free-tier routing and simple execution with `gemini-3.1-flash-lite`
+- One-time fallback to `zai/glm-4.7-flashx` for Gemini quota/service failures
 - Complex execution with `zai/glm-5.2`
+- Sensitive-label protection that keeps `ai-sensitive` work away from Gemini
 - Human handoff to `Needs My Action`
 - Candidate results to `In Review` (never automatically `Done`)
 - Per-generation, task, project-month, and model-month usage records
-- Per-task and per-project internal AI spending gates
+- Per-task token and spending gates plus a per-project spending gate
 
 The first worker produces text-based candidate results. It does not yet clone a
 repository, edit code, run tests, or deploy changes; work requiring those tools
@@ -41,8 +43,9 @@ reserves some such paths and can intercept them before they reach the container.
 | `project_usage_monthly` | Monthly project token and estimated-cost totals |
 | `model_usage_monthly` | Monthly model token and estimated-cost totals |
 
-Costs use integer micro-dollars. A generation is recorded as pending before the
-model request and then completed or failed, making retries auditable.
+Costs use integer micro-dollars. Every provider attempt has its own deterministic
+generation ID and is recorded as pending before the model request, then completed
+or failed. Gemini free-tier calls still count toward task token limits.
 
 ## Worker deployment
 
@@ -74,6 +77,12 @@ Never commit the real Linear webhook secret or a Google service-account key.
 | `FIRESTORE_DATABASE_ID` | No | `(default)` | Firestore database ID |
 | `LINEAR_WEBHOOK_TOLERANCE_MS` | No | `60000` | Replay-protection window |
 | `PORT` | No | `8080` | HTTP port supplied by Cloud Run |
+
+Worker-only variables are documented in `.env.worker.example`. Gemini is disabled
+unless `GEMINI_ALLOWED_PROJECTS` contains the issue's Linear project name or ID.
+An issue carrying any label in `GEMINI_SENSITIVE_LABELS` bypasses Gemini even when
+its project is allowed. This is important because free-tier Gemini content may be
+handled under different data-use terms from paid providers.
 
 ## Verification
 

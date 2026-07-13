@@ -44,6 +44,7 @@ export class LinearGraphQlClient implements LinearClient {
       state: { id: string; name: string };
       team: { id: string; states: { nodes: Array<{ id: string; name: string; type: string }> } };
       project: { id: string; name: string } | null;
+      labels: { nodes: Array<{ id: string; name: string }> };
     } }>(
       `query WorkerIssue($id: String!) {
         issue(id: $id) {
@@ -51,6 +52,7 @@ export class LinearGraphQlClient implements LinearClient {
           state { id name }
           team { id states { nodes { id name type } } }
           project { id name }
+          labels { nodes { id name } }
         }
       }`,
       { id },
@@ -58,6 +60,7 @@ export class LinearGraphQlClient implements LinearClient {
     return {
       ...data.issue,
       team: { id: data.issue.team.id, states: data.issue.team.states.nodes },
+      labels: data.issue.labels.nodes,
     };
   }
 

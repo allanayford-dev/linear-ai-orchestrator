@@ -8,6 +8,7 @@ Run them in Google Cloud Shell after the `develop` branch is pushed.
 Create a Linear personal API key with permission to read issues, update issues,
 and create comments. Create a Vercel AI Gateway API key and apply a hard provider
 spend limit that fits inside the overall $20 monthly budget (recommended: $10).
+Create a Gemini API key in Google AI Studio for free-tier eligible work.
 
 ```bash
 read -s -p "Linear API key: " LINEAR_API_KEY; echo
@@ -19,6 +20,11 @@ read -s -p "AI Gateway API key: " AI_GATEWAY_API_KEY; echo
 printf %s "$AI_GATEWAY_API_KEY" | gcloud secrets create ai-gateway-api-key \
   --project=glm-api-server --replication-policy=automatic --data-file=-
 unset AI_GATEWAY_API_KEY
+
+read -s -p "Gemini API key: " GEMINI_API_KEY; echo
+printf %s "$GEMINI_API_KEY" | gcloud secrets create gemini-api-key \
+  --project=glm-api-server --replication-policy=automatic --data-file=-
+unset GEMINI_API_KEY
 ```
 
 If a secret already exists, use `gcloud secrets versions add SECRET_NAME
@@ -38,7 +44,7 @@ gcloud projects add-iam-policy-binding "$PROJECT" \
   --member="serviceAccount:orchestrator-worker@$PROJECT.iam.gserviceaccount.com" \
   --role=roles/datastore.user
 
-for SECRET in linear-api-key ai-gateway-api-key; do
+for SECRET in linear-api-key ai-gateway-api-key gemini-api-key; do
   gcloud secrets add-iam-policy-binding "$SECRET" --project="$PROJECT" \
     --member="serviceAccount:orchestrator-worker@$PROJECT.iam.gserviceaccount.com" \
     --role=roles/secretmanager.secretAccessor
@@ -76,9 +82,13 @@ gcloud run deploy orchestrator-worker \
   --timeout=600 \
   --command=node \
   --args=dist/worker-server.js \
-  --set-env-vars="GCP_PROJECT_ID=$PROJECT,FIRESTORE_DATABASE_ID=(default),ROUTER_MODEL=zai/glm-4.7-flashx,EXECUTOR_MODEL=zai/glm-5.2,LINEAR_TODO_STATE=Todo,LINEAR_IN_PROGRESS_STATE=In Progress,LINEAR_NEEDS_ACTION_STATE=Needs My Action,LINEAR_REVIEW_STATE=In Review,TASK_LEASE_SECONDS=900,MAX_TASK_COST_MICROS=250000,MAX_PROJECT_MONTHLY_COST_MICROS=5000000" \
-  --set-secrets="LINEAR_API_KEY=linear-api-key:latest,AI_GATEWAY_API_KEY=ai-gateway-api-key:latest"
+  --set-env-vars="GCP_PROJECT_ID=$PROJECT,FIRESTORE_DATABASE_ID=(default),GEMINI_MODEL=gemini-3.1-flash-lite,GEMINI_ALLOWED_PROJECTS=YOUR_LINEAR_PROJECT_NAME_OR_ID,GEMINI_SENSITIVE_LABELS=ai-sensitive,ROUTER_MODEL=zai/glm-4.7-flashx,EXECUTOR_MODEL=zai/glm-5.2,LINEAR_TODO_STATE=Todo,LINEAR_IN_PROGRESS_STATE=In Progress,LINEAR_NEEDS_ACTION_STATE=Needs My Action,LINEAR_REVIEW_STATE=In Review,TASK_LEASE_SECONDS=900,MAX_TASK_COST_MICROS=250000,MAX_TASK_TOKENS=50000,MAX_PROJECT_MONTHLY_COST_MICROS=5000000" \
+  --set-secrets="LINEAR_API_KEY=linear-api-key:latest,AI_GATEWAY_API_KEY=ai-gateway-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest"
 ```
+
+Replace `YOUR_LINEAR_PROJECT_NAME_OR_ID` with an explicitly approved Linear
+project. An empty allowlist disables Gemini. Add the `ai-sensitive` label to any
+issue that must bypass the free tier; the paid GLM route remains available.
 
 `max=1` and `concurrency=1` intentionally serialize the pilot. This controls
 spend and makes the initial lease behavior easy to audit. Request-based billing
@@ -136,3 +146,8 @@ should move through `In Progress` and end in either:
 Confirm Firestore contains records in `generations`, `task_usage`,
 `project_usage_monthly`, and `model_usage_monthly`. Do not bulk-enable old Todo
 issues until the pilot record and the Vercel spend limit have been checked.
+
+For an eligible simple issue, the Linear usage comment should name
+`google-gemini/gemini-3.1-flash-lite (free)` and Vercel spend should remain
+unchanged. A Gemini `429` or temporary `5xx` is recorded as a failed attempt and
+receives exactly one GLM FlashX fallback.

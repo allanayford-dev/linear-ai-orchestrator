@@ -29,13 +29,17 @@ export interface LinearIssue {
     states: Array<{ id: string; name: string; type: string }>;
   };
   project: { id: string; name: string } | null;
+  labels: Array<{ id: string; name: string }>;
 }
 
 export type ModelRole = "router" | "executor";
+export type ModelProvider = "google-gemini" | "vercel-ai-gateway";
+export type PricingTier = "free" | "paid";
 
 export interface ModelUsage {
   inputTokens: number;
   outputTokens: number;
+  reasoningTokens: number;
   totalTokens: number;
   estimatedCostMicros: number;
   pricing: { inputPerToken: number; outputPerToken: number } | null;

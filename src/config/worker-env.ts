@@ -4,6 +4,10 @@ export interface WorkerConfig {
   databaseId: string;
   linearApiKey: string;
   aiGatewayApiKey: string;
+  geminiApiKey: string;
+  geminiModel: string;
+  geminiAllowedProjects: string[];
+  geminiSensitiveLabels: string[];
   routerModel: string;
   executorModel: string;
   states: {
@@ -14,6 +18,7 @@ export interface WorkerConfig {
   };
   leaseSeconds: number;
   maxTaskCostMicros: number;
+  maxTaskTokens: number;
   maxProjectMonthlyCostMicros: number;
 }
 
@@ -33,6 +38,12 @@ function integer(name: string, fallback: number): number {
   return value;
 }
 
+function list(name: string, fallback: string[] = []): string[] {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  return raw.split(",").map((value) => value.trim()).filter(Boolean);
+}
+
 export function loadWorkerConfig(): WorkerConfig {
   const projectId = process.env.GCP_PROJECT_ID?.trim();
   return {
@@ -41,6 +52,11 @@ export function loadWorkerConfig(): WorkerConfig {
     databaseId: process.env.FIRESTORE_DATABASE_ID?.trim() || "(default)",
     linearApiKey: required("LINEAR_API_KEY"),
     aiGatewayApiKey: required("AI_GATEWAY_API_KEY"),
+    geminiApiKey: required("GEMINI_API_KEY"),
+    geminiModel:
+      process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite",
+    geminiAllowedProjects: list("GEMINI_ALLOWED_PROJECTS"),
+    geminiSensitiveLabels: list("GEMINI_SENSITIVE_LABELS", ["ai-sensitive"]),
     routerModel: process.env.ROUTER_MODEL?.trim() || "zai/glm-4.7-flashx",
     executorModel: process.env.EXECUTOR_MODEL?.trim() || "zai/glm-5.2",
     states: {
@@ -52,6 +68,7 @@ export function loadWorkerConfig(): WorkerConfig {
     },
     leaseSeconds: integer("TASK_LEASE_SECONDS", 900),
     maxTaskCostMicros: integer("MAX_TASK_COST_MICROS", 250_000),
+    maxTaskTokens: integer("MAX_TASK_TOKENS", 50_000),
     maxProjectMonthlyCostMicros: integer(
       "MAX_PROJECT_MONTHLY_COST_MICROS",
       5_000_000,

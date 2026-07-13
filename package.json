@@ -19,6 +19,7 @@
   "dependencies": {
     "@google-cloud/firestore": "^8.6.0",
     "@google-cloud/pubsub": "5.0.0",
+    "@google/genai": "^2.0.1",
     "express": "^5.2.1"
   },
   "devDependencies": {
