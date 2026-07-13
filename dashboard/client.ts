@@ -15,6 +15,14 @@ interface DashboardData {
   month: string;
   paidAiCircuitBreakerMicros: number;
   paidAiPaused: boolean;
+  gatewaySync: {
+    status: string;
+    error: string | null;
+    syncedAt: string | null;
+    startDate: string | null;
+    endDate: string | null;
+    requestCount: number;
+  };
   budget: {
     estimatedAiCostMicros: number;
     gatewayActualCostMicros: number;
@@ -174,6 +182,13 @@ function render(data: DashboardData) {
     ["Google Cloud", budget.gcpCostMicros],
     ["Other", budget.otherCostMicros],
   ].map(([label, value]) => `<div class="stack-row"><span>${label}</span><strong>${dollars(Number(value), 6)}</strong></div>`).join("");
+  const syncCopy = data.gatewaySync.status === "error"
+    ? `Vercel sync needs attention: ${data.gatewaySync.error || "reporting request failed"}`
+    : data.gatewaySync.syncedAt
+      ? `Vercel synced ${timestamp(data.gatewaySync.syncedAt)} · ${integer(data.gatewaySync.requestCount)} requests · ${data.gatewaySync.startDate} to ${data.gatewaySync.endDate}`
+      : "Vercel actual cost has not been synced automatically yet.";
+  byId("gateway-sync").textContent = syncCopy;
+  byId("gateway-sync-control").textContent = syncCopy;
 
   byId<HTMLInputElement>("budget-input").value = String(budget.budgetMicros / 1_000_000);
   byId<HTMLInputElement>("paid-stop-input").value = String(data.paidAiCircuitBreakerMicros / 1_000_000);
