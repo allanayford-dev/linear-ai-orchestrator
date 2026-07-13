@@ -1,8 +1,7 @@
 # Linear AI Orchestrator
 
-Initial Cloud Run service for receiving signed Linear webhooks, recording task
-metadata in Firestore, and publishing durable work events to Google Cloud
-Pub/Sub.
+Two-service Cloud Run starter for receiving signed Linear webhooks and safely
+orchestrating Todo issues through Google Cloud Pub/Sub.
 
 ## Current scope
 
@@ -15,9 +14,18 @@ Pub/Sub.
 - Zero-value task usage records ready for later model-call aggregation
 - Pub/Sub publication to `orchestrator-tasks`
 - Duplicate delivery protection using `Linear-Delivery`
+- Private Pub/Sub push worker with Firestore task leases
+- `Todo` -> `In Progress` claims
+- Low-cost routing with `zai/glm-4.7-flashx`
+- Complex execution with `zai/glm-5.2`
+- Human handoff to `Needs My Action`
+- Candidate results to `In Review` (never automatically `Done`)
+- Per-generation, task, project-month, and model-month usage records
+- Per-task and per-project internal AI spending gates
 
-The worker, model gateway, Linear status transitions, and generation-level usage
-updates are intentionally separate follow-up services.
+The first worker produces text-based candidate results. It does not yet clone a
+repository, edit code, run tests, or deploy changes; work requiring those tools
+is handed to `Needs My Action` instead of being falsely reported as complete.
 
 The liveness route deliberately avoids a path ending in `z`, because Cloud Run
 reserves some such paths and can intercept them before they reach the container.
@@ -29,9 +37,19 @@ reserves some such paths and can intercept them before they reach the container.
 | `webhook_events` | Raw event audit, processing status, and Pub/Sub message ID |
 | `tasks` | Latest Linear issue snapshot and orchestration identifiers |
 | `task_usage` | Per-task token and cost totals, initially zero |
+| `generations` | Idempotent ledger entry for every model call and result |
+| `project_usage_monthly` | Monthly project token and estimated-cost totals |
+| `model_usage_monthly` | Monthly model token and estimated-cost totals |
 
-Costs use integer micro-dollars when model usage is added. Individual model
-calls will later be stored in a separate `generations` collection.
+Costs use integer micro-dollars. A generation is recorded as pending before the
+model request and then completed or failed, making retries auditable.
+
+## Worker deployment
+
+The Cloud Shell setup, IAM grants, secrets, private Cloud Run deployment, and
+authenticated Pub/Sub push configuration are in
+[`docs/deploy-worker.md`](docs/deploy-worker.md). Use `npm run dev:worker` or
+`npm run start:worker` for the worker entry point.
 
 ## Local development
 

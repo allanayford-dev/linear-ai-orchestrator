@@ -1,0 +1,24 @@
+import { Firestore } from "@google-cloud/firestore";
+import { createWorkerApp } from "./worker-app.js";
+import { loadWorkerConfig } from "./config/worker-env.js";
+import { FirestoreWorkerRepository } from "./repositories/firestore-worker-repository.js";
+import { VercelAiGatewayClient } from "./services/ai-gateway-client.js";
+import { LinearGraphQlClient } from "./services/linear-client.js";
+import { OrchestratorWorkerService } from "./services/orchestrator-worker-service.js";
+
+const config = loadWorkerConfig();
+const firestoreOptions = {
+  databaseId: config.databaseId,
+  ...(config.projectId ? { projectId: config.projectId } : {}),
+};
+const repository = new FirestoreWorkerRepository(new Firestore(firestoreOptions));
+const worker = new OrchestratorWorkerService(
+  config,
+  repository,
+  new LinearGraphQlClient(config.linearApiKey),
+  new VercelAiGatewayClient(config.aiGatewayApiKey),
+);
+
+createWorkerApp(worker).listen(config.port, "0.0.0.0", () => {
+  console.log(`orchestrator-worker listening on port ${config.port}`);
+});

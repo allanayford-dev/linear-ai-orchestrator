@@ -3,6 +3,7 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.worker.example
 coverage/
 *.log
 .DS_Store
