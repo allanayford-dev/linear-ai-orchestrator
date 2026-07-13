@@ -92,7 +92,7 @@ function issuePayload(timestamp = now) {
 describe("linear webhook service", () => {
   it("reports service health", async () => {
     const { app } = createTestApp();
-    const response = await request(app).get("/healthz");
+    const response = await request(app).get("/health");
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: "ok", service: "linear-webhook" });
   });

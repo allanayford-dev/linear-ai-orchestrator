@@ -6,7 +6,7 @@ Pub/Sub.
 
 ## Current scope
 
-- `GET /healthz` liveness endpoint
+- `GET /health` liveness endpoint
 - `POST /webhooks/linear` signed Linear webhook receiver
 - HMAC-SHA256 verification against the exact raw body
 - 60-second replay protection window
@@ -18,6 +18,9 @@ Pub/Sub.
 
 The worker, model gateway, Linear status transitions, and generation-level usage
 updates are intentionally separate follow-up services.
+
+The liveness route deliberately avoids a path ending in `z`, because Cloud Run
+reserves some such paths and can intercept them before they reach the container.
 
 ## Data created in Firestore
 

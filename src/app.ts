@@ -17,7 +17,7 @@ export function createApp({ config, webhookService, now = Date.now }: AppDepende
   const app = express();
   app.disable("x-powered-by");
 
-  app.get("/healthz", (_request, response) => {
+  app.get("/health", (_request, response) => {
     response.status(200).json({ status: "ok", service: "linear-webhook" });
   });
 
