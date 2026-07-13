@@ -42,6 +42,7 @@ export interface ModelUsage {
   reasoningTokens: number;
   totalTokens: number;
   estimatedCostMicros: number;
+  costSource?: "gateway-response" | "model-catalog" | "free-tier";
   pricing: { inputPerToken: number; outputPerToken: number } | null;
 }
 

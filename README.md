@@ -31,7 +31,7 @@ and cost through a Firebase-authenticated operations dashboard.
 - Task, generation, model, project, alert, and cost dashboard views
 - $18 paid-AI safety stop, $20 total ceiling, and 50/75/90/100% alerts
 - Manual actual-cost inputs for AI Gateway, Google Cloud, and other providers
-- Automatic Vercel AI Gateway actual-cost reconciliation with visible sync health
+- Immediate Vercel response-cost capture with model-catalog fallback
 
 The first worker produces text-based candidate results. It does not yet clone a
 repository, edit code, run tests, or deploy changes; work requiring those tools
@@ -71,9 +71,8 @@ Dashboard authentication, deployment, Hosting rewrite, and verification are in
 [`docs/deploy-dashboard.md`](docs/deploy-dashboard.md). Use
 `npm run dev:dashboard` or `npm run start:dashboard` for its entry point.
 
-Automatic Vercel cost reconciliation and its authenticated Cloud Scheduler job
-are documented in
-[`docs/deploy-vercel-reconciliation.md`](docs/deploy-vercel-reconciliation.md).
+Free-plan Vercel cost tracking, API-key protection, and CSV reconciliation are
+documented in [`docs/vercel-free-cost-tracking.md`](docs/vercel-free-cost-tracking.md).
 
 ## Local development
 

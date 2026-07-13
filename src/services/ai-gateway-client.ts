@@ -30,6 +30,7 @@ interface ChatResponse {
     completion_tokens?: number;
     total_tokens?: number;
     completion_tokens_details?: { reasoning_tokens?: number };
+    cost?: number | string;
   };
 }
 
@@ -46,6 +47,13 @@ const FALLBACK_PRICING: Record<string, { inputPerToken: number; outputPerToken: 
   "zai/glm-4.7-flashx": { inputPerToken: 0.06 / 1_000_000, outputPerToken: 0.40 / 1_000_000 },
   "zai/glm-5.2": { inputPerToken: 3 / 1_000_000, outputPerToken: 10.25 / 1_000_000 },
 };
+
+function gatewayCostMicros(value: unknown): number | null {
+  const dollars = typeof value === "string" ? Number(value) : value;
+  return typeof dollars === "number" && Number.isFinite(dollars) && dollars >= 0
+    ? Math.round(dollars * 1_000_000)
+    : null;
+}
 
 export class VercelAiGatewayClient implements ModelClient {
   private catalog: { expiresAt: number; models: ModelCatalog["data"] } | null = null;
@@ -143,10 +151,11 @@ export class VercelAiGatewayClient implements ModelClient {
     const rawText = body.choices?.[0]?.message?.content?.trim() ?? "";
     const inputTokens = body.usage?.prompt_tokens ?? 0;
     const outputTokens = body.usage?.completion_tokens ?? 0;
-    const pricing = await this.pricing(model);
-    const estimatedCostMicros = pricing
+    const responseCostMicros = gatewayCostMicros(body.usage?.cost);
+    const pricing = responseCostMicros === null ? await this.pricing(model) : null;
+    const estimatedCostMicros = responseCostMicros ?? (pricing
       ? Math.round((inputTokens * pricing.inputPerToken + outputTokens * pricing.outputPerToken) * 1_000_000)
-      : 0;
+      : 0);
     const result = {
       rawText,
       providerRequestId: body.id ?? null,
@@ -156,6 +165,9 @@ export class VercelAiGatewayClient implements ModelClient {
         reasoningTokens: body.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
         totalTokens: body.usage?.total_tokens ?? inputTokens + outputTokens,
         estimatedCostMicros,
+        costSource: responseCostMicros === null
+          ? "model-catalog" as const
+          : "gateway-response" as const,
         pricing,
       },
     };
