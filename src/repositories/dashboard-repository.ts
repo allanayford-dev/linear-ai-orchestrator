@@ -16,6 +16,7 @@ export interface DashboardData {
   projects: DashboardRecord[];
   models: DashboardRecord[];
   alerts: DashboardRecord[];
+  deadLetters: DashboardRecord[];
 }
 
 export interface BudgetUpdate {

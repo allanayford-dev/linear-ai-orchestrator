@@ -72,7 +72,7 @@ label { display: grid; gap: .45rem; margin: 1rem 0; color: #cbd1da; font-size: .
 .focus-panel h3 { margin: .3rem 0; font-size: 1.8rem; letter-spacing: -.04em; }
 .status-pill { display: inline-flex; padding: .3rem .55rem; border-radius: 999px; background: rgba(199,255,88,.1); color: var(--lime); font-size: .72rem; }
 .status-pill.paused { color: var(--red); background: rgba(255,101,119,.11); }
-.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 1rem; }
+.metric-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; margin-top: 1rem; }
 .metric { padding: 1.1rem; display: grid; gap: .7rem; color: var(--muted); }
 .metric strong { color: #fff; font-size: 1.75rem; letter-spacing: -.04em; }
 .section-gap { margin-top: 1rem; }

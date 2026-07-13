@@ -2,10 +2,12 @@ import { Firestore } from "@google-cloud/firestore";
 import { createWorkerApp } from "./worker-app.js";
 import { loadWorkerConfig } from "./config/worker-env.js";
 import { FirestoreWorkerRepository } from "./repositories/firestore-worker-repository.js";
+import { FirestoreDeadLetterRepository } from "./repositories/firestore-dead-letter-repository.js";
 import { VercelAiGatewayClient } from "./services/ai-gateway-client.js";
 import { GeminiClient } from "./services/gemini-client.js";
 import { LinearGraphQlClient } from "./services/linear-client.js";
 import { OrchestratorWorkerService } from "./services/orchestrator-worker-service.js";
+import { DeadLetterService } from "./services/dead-letter-service.js";
 
 const config = loadWorkerConfig();
 const firestoreOptions = {
@@ -25,7 +27,10 @@ const worker = new OrchestratorWorkerService(
   new GeminiClient(config.geminiApiKey),
   new VercelAiGatewayClient(config.aiGatewayApiKey),
 );
+const deadLetters = new DeadLetterService(
+  new FirestoreDeadLetterRepository(firestore),
+);
 
-createWorkerApp(worker).listen(config.port, "0.0.0.0", () => {
+createWorkerApp(worker, deadLetters).listen(config.port, "0.0.0.0", () => {
   console.log(`orchestrator-worker listening on port ${config.port}`);
 });

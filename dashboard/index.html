@@ -69,6 +69,7 @@
             <article class="metric"><span>Total tokens</span><strong id="metric-tokens">0</strong></article>
             <article class="metric"><span>Active tasks</span><strong id="metric-active">0</strong></article>
             <article class="metric"><span>Needs my action</span><strong id="metric-action">0</strong></article>
+            <article class="metric"><span>Dead letters</span><strong id="metric-dead-letters">0</strong></article>
           </div>
 
           <div class="content-grid">
@@ -87,6 +88,10 @@
           <article class="panel">
             <div class="panel-heading"><span>Task execution ledger</span><span id="task-count" class="muted compact"></span></div>
             <div id="all-tasks" class="table-wrap"></div>
+          </article>
+          <article class="panel section-gap">
+            <div class="panel-heading"><span>Exhausted deliveries</span><span id="dead-letter-count" class="muted compact"></span></div>
+            <div id="dead-letters" class="table-wrap"></div>
           </article>
         </section>
 

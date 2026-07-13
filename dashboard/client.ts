@@ -33,6 +33,7 @@ interface DashboardData {
   projects: RecordValue[];
   models: RecordValue[];
   alerts: RecordValue[];
+  deadLetters: RecordValue[];
 }
 
 const byId = <T extends HTMLElement>(id: string) =>
@@ -117,6 +118,18 @@ function generationTable(generations: RecordValue[]) {
     </tr>`).join("")}</tbody></table>`;
 }
 
+function deadLetterTable(deadLetters: RecordValue[]) {
+  if (!deadLetters.length) return '<div class="empty">No exhausted deliveries recorded.</div>';
+  return `<table><thead><tr><th>Issue</th><th>Source subscription</th><th>Attempts</th><th>State</th><th>Received</th></tr></thead><tbody>${deadLetters.map((item) => `
+    <tr>
+      <td>${html(item.issueIdentifier)}</td>
+      <td>${html(item.sourceSubscription)}</td>
+      <td>${integer(item.sourceDeliveryCount)}</td>
+      <td><span class="chip ${statusClass(item.status)}">${html(item.malformed ? "malformed" : item.status)}</span></td>
+      <td>${html(timestamp(item.receivedAt))}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
 function render(data: DashboardData) {
   dashboard = data;
   const budget = data.budget;
@@ -150,10 +163,13 @@ function render(data: DashboardData) {
   byId("metric-tokens").textContent = integer(totalTokens);
   byId("metric-active").textContent = integer(active);
   byId("metric-action").textContent = integer(needsAction);
+  byId("metric-dead-letters").textContent = integer(data.deadLetters.length);
 
   byId("recent-tasks").innerHTML = taskTable(data.tasks, 7);
   byId("all-tasks").innerHTML = taskTable(data.tasks);
   byId("task-count").textContent = `${data.tasks.length} records`;
+  byId("dead-letters").innerHTML = deadLetterTable(data.deadLetters);
+  byId("dead-letter-count").textContent = `${data.deadLetters.length} records`;
   byId("generations").innerHTML = generationTable(data.generations);
   byId("generation-count").textContent = `${data.generations.length} records`;
 
