@@ -14,7 +14,12 @@ export interface GenerationContext {
 }
 
 export interface WorkerRepository {
-  claim(issue: LinearIssue, deliveryId: string, leaseSeconds: number): Promise<ClaimResult>;
+  claim(
+    issue: LinearIssue,
+    deliveryId: string,
+    leaseSeconds: number,
+    allowNewClaim: boolean,
+  ): Promise<ClaimResult>;
   getCompletedGeneration<T>(generationId: string): Promise<ModelResult<T> | null>;
   startGeneration(context: GenerationContext): Promise<void>;
   completeGeneration<T>(context: GenerationContext, result: ModelResult<T>): Promise<void>;

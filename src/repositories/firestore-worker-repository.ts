@@ -17,14 +17,21 @@ function documentPart(value: string): string {
 export class FirestoreWorkerRepository implements WorkerRepository {
   constructor(private readonly firestore: Firestore) {}
 
-  async claim(issue: LinearIssue, deliveryId: string, leaseSeconds: number): Promise<ClaimResult> {
+  async claim(
+    issue: LinearIssue,
+    deliveryId: string,
+    leaseSeconds: number,
+    allowNewClaim: boolean,
+  ): Promise<ClaimResult> {
     const ref = this.firestore.collection("tasks").doc(issue.id);
     return this.firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(ref);
       const data = snapshot.data();
       if (data?.completedDeliveryId === deliveryId) return "duplicate";
+      const resumingDelivery = data?.currentDeliveryId === deliveryId;
+      if (!allowNewClaim && !resumingDelivery) return "busy";
       const leaseUntil = data?.leaseUntil as Timestamp | undefined;
-      if (leaseUntil && leaseUntil.toMillis() > Date.now() && data?.currentDeliveryId !== deliveryId) {
+      if (leaseUntil && leaseUntil.toMillis() > Date.now() && !resumingDelivery) {
         return "busy";
       }
       transaction.set(ref, {

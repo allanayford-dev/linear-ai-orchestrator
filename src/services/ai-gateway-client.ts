@@ -118,8 +118,17 @@ export class VercelAiGatewayClient implements AiGatewayClient {
     });
     const body = (await response.json()) as ChatResponse & { error?: { message?: string } };
     if (!response.ok) {
-      const error = new Error(body.error?.message || `AI Gateway failed: ${response.status}`);
-      if (response.status === 402) error.name = "BudgetExceededError";
+      const message = body.error?.message || `AI Gateway failed: ${response.status}`;
+      const error = new Error(message);
+      if (response.status === 402) {
+        error.name = "BudgetExceededError";
+      } else if (
+        response.status === 401 ||
+        response.status === 403 ||
+        /credit card|payment method|invalid api key|authentication/i.test(message)
+      ) {
+        error.name = "ProviderConfigurationError";
+      }
       throw error;
     }
     const rawText = body.choices?.[0]?.message?.content;

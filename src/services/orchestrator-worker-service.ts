@@ -123,15 +123,23 @@ export class OrchestratorWorkerService {
     }
 
     const issue = await this.linear.getIssue(issueId);
-    if (issue.state.name.toLowerCase() !== this.config.states.todo.toLowerCase()) {
+    const currentState = issue.state.name.toLowerCase();
+    const isTodo = currentState === this.config.states.todo.toLowerCase();
+    const isInProgress = currentState === this.config.states.inProgress.toLowerCase();
+    if (!isTodo && !isInProgress) {
       return { outcome: "ignored", reason: `Current state is ${issue.state.name}` };
     }
 
-    const claim = await this.repository.claim(issue, event.deliveryId, this.config.leaseSeconds);
+    const claim = await this.repository.claim(
+      issue,
+      event.deliveryId,
+      this.config.leaseSeconds,
+      isTodo,
+    );
     if (claim !== "claimed") return { outcome: claim };
 
     try {
-      await this.linear.moveIssue(issue, this.config.states.inProgress);
+      if (isTodo) await this.linear.moveIssue(issue, this.config.states.inProgress);
       const calls: Array<{ model: string; result: ModelResult<unknown> }> = [];
       const routerContext = this.context(issue, event.deliveryId, "router", this.config.routerModel);
       const routed = await this.generate<RouteDecision>(
@@ -205,16 +213,15 @@ export class OrchestratorWorkerService {
           "Review the task and budget. Increase the limit only if appropriate, then move the issue back to Todo.",
         );
       }
-      await this.repository.failTask(issue.id, event.deliveryId, failure);
-      // Return ownership to the queue before Pub/Sub retries. Without this,
-      // the retry would see In Progress and correctly refuse to steal it.
-      if (issue.state.name.toLowerCase() === this.config.states.inProgress.toLowerCase()) {
-        try {
-          await this.linear.moveIssue(issue, this.config.states.todo);
-        } catch (rollbackError) {
-          console.error("Could not return failed issue to Todo", rollbackError);
-        }
+      if (failure.name === "ProviderConfigurationError") {
+        return this.handOff(
+          issue,
+          event.deliveryId,
+          "The AI provider rejected the request because its account or payment configuration is incomplete.",
+          "Add or verify the Vercel payment method and AI Gateway key, then move the issue back to Todo.",
+        );
       }
+      await this.repository.failTask(issue.id, event.deliveryId, failure);
       throw failure;
     }
   }

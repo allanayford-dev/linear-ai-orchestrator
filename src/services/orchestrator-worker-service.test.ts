@@ -73,11 +73,16 @@ function modelResult<T>(value: T): ModelResult<T> {
   };
 }
 
-function harness(currentIssue: LinearIssue, route: RouteDecision, execution?: ExecutionResult) {
+function harness(
+  currentIssue: LinearIssue,
+  route: RouteDecision,
+  execution?: ExecutionResult,
+  claimResult: "claimed" | "duplicate" | "busy" = "claimed",
+) {
   const transitions: string[] = [];
   const comments: string[] = [];
   const repository: WorkerRepository = {
-    claim: vi.fn().mockResolvedValue("claimed"),
+    claim: vi.fn().mockResolvedValue(claimResult),
     getCompletedGeneration: vi.fn().mockResolvedValue(null),
     startGeneration: vi.fn().mockResolvedValue(undefined),
     completeGeneration: vi.fn().mockResolvedValue(undefined),
@@ -136,18 +141,45 @@ describe("OrchestratorWorkerService", () => {
     expect(h.comments[0]).toContain("Approve the rollout");
   });
 
+  it("acknowledges provider account failures as Needs My Action", async () => {
+    const h = harness(issue(), {
+      complexity: "simple",
+      outcome: "execute",
+      reason: "Simple",
+    });
+    const providerError = new Error("A valid credit card is required");
+    providerError.name = "ProviderConfigurationError";
+    vi.mocked(h.ai.route).mockRejectedValue(providerError);
+
+    await expect(h.service.handle(event)).resolves.toMatchObject({ outcome: "needs_action" });
+    expect(h.transitions).toEqual(["In Progress", "Needs My Action"]);
+    expect(h.comments[0]).toContain("payment configuration is incomplete");
+    expect(h.repository.failTask).not.toHaveBeenCalled();
+  });
+
   it("ignores a stale delivery when the issue is no longer Todo", async () => {
     const h = harness(issue("In Progress"), {
       complexity: "simple",
       outcome: "execute",
       reason: "Simple",
-    });
+    }, undefined, "busy");
 
     await expect(h.service.handle(event)).resolves.toEqual({
-      outcome: "ignored",
-      reason: "Current state is In Progress",
+      outcome: "busy",
     });
-    expect(h.repository.claim).not.toHaveBeenCalled();
+    expect(h.repository.claim).toHaveBeenCalledWith(expect.anything(), "delivery-1", 900, false);
     expect(h.ai.route).not.toHaveBeenCalled();
+  });
+
+  it("resumes the original delivery without changing In Progress again", async () => {
+    const h = harness(
+      issue("In Progress"),
+      { complexity: "simple", outcome: "execute", reason: "Retry" },
+      { outcome: "ready_for_review", summary: "Recovered", result: "Result", verification: [] },
+    );
+
+    await expect(h.service.handle(event)).resolves.toEqual({ outcome: "in_review" });
+    expect(h.transitions).toEqual(["In Review"]);
+    expect(h.repository.claim).toHaveBeenCalledWith(expect.anything(), "delivery-1", 900, false);
   });
 });
