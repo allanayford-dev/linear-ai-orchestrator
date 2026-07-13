@@ -1,0 +1,16 @@
+{
+  "hosting": {
+    "public": "firebase-public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "**",
+        "run": {
+          "serviceId": "orchestrator-dashboard",
+          "region": "africa-south1",
+          "pinTag": true
+        }
+      }
+    ]
+  }
+}

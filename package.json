@@ -9,9 +9,13 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:worker": "tsx watch src/worker-server.ts",
-    "build": "tsc -p tsconfig.json",
+    "dev:dashboard": "npm run build:dashboard && tsx watch src/dashboard-server.ts",
+    "build": "npm run build:server && npm run build:dashboard",
+    "build:server": "tsc -p tsconfig.json",
+    "build:dashboard": "node scripts/build-dashboard.mjs",
     "start": "node dist/server.js",
     "start:worker": "node dist/worker-server.js",
+    "start:dashboard": "node dist/dashboard-server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -20,12 +24,15 @@
     "@google-cloud/firestore": "^8.6.0",
     "@google-cloud/pubsub": "5.0.0",
     "@google/genai": "^2.0.1",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "firebase": "^12.16.0",
+    "firebase-admin": "^14.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",
     "@types/supertest": "^6.0.3",
+    "esbuild": "^0.28.1",
     "supertest": "^7.1.4",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",

@@ -5,6 +5,8 @@ COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
+COPY dashboard ./dashboard
+COPY scripts ./scripts
 RUN npm run build
 RUN npm prune --omit=dev
 

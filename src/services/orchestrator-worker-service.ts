@@ -140,6 +140,9 @@ export class OrchestratorWorkerService {
       this.config.maxTaskCostMicros,
       this.config.maxProjectMonthlyCostMicros,
       this.config.maxTaskTokens,
+      this.config.maxSystemMonthlyCostMicros,
+      this.config.paidAiCircuitBreakerMicros,
+      context.pricingTier,
     );
     await this.repository.startGeneration(context);
     try {

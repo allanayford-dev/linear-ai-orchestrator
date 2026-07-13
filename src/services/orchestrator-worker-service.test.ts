@@ -33,6 +33,8 @@ const config: WorkerConfig = {
   maxTaskCostMicros: 250_000,
   maxTaskTokens: 50_000,
   maxProjectMonthlyCostMicros: 5_000_000,
+  maxSystemMonthlyCostMicros: 20_000_000,
+  paidAiCircuitBreakerMicros: 18_000_000,
 };
 
 function issue(state = "Todo"): LinearIssue {
@@ -149,6 +151,28 @@ describe("OrchestratorWorkerService", () => {
     expect(h.transitions).toEqual(["In Progress", "In Review"]);
     expect(h.comments[0]).toContain("candidate result awaiting human review");
     expect(h.repository.completeGeneration).toHaveBeenCalledTimes(2);
+    expect(h.repository.assertWithinBudget).toHaveBeenNthCalledWith(
+      1,
+      "issue-1",
+      "project-1",
+      250_000,
+      5_000_000,
+      50_000,
+      20_000_000,
+      18_000_000,
+      "free",
+    );
+    expect(h.repository.assertWithinBudget).toHaveBeenNthCalledWith(
+      2,
+      "issue-1",
+      "project-1",
+      250_000,
+      5_000_000,
+      50_000,
+      20_000_000,
+      18_000_000,
+      "paid",
+    );
   });
 
   it("hands blocked work to Needs My Action without calling the executor", async () => {

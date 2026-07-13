@@ -20,6 +20,8 @@ export interface WorkerConfig {
   maxTaskCostMicros: number;
   maxTaskTokens: number;
   maxProjectMonthlyCostMicros: number;
+  maxSystemMonthlyCostMicros: number;
+  paidAiCircuitBreakerMicros: number;
 }
 
 function required(name: string): string {
@@ -72,6 +74,14 @@ export function loadWorkerConfig(): WorkerConfig {
     maxProjectMonthlyCostMicros: integer(
       "MAX_PROJECT_MONTHLY_COST_MICROS",
       5_000_000,
+    ),
+    maxSystemMonthlyCostMicros: integer(
+      "MAX_SYSTEM_MONTHLY_COST_MICROS",
+      20_000_000,
+    ),
+    paidAiCircuitBreakerMicros: integer(
+      "PAID_AI_CIRCUIT_BREAKER_MICROS",
+      18_000_000,
     ),
   };
 }

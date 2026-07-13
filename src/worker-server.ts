@@ -12,7 +12,11 @@ const firestoreOptions = {
   databaseId: config.databaseId,
   ...(config.projectId ? { projectId: config.projectId } : {}),
 };
-const repository = new FirestoreWorkerRepository(new Firestore(firestoreOptions));
+const repository = new FirestoreWorkerRepository(
+  new Firestore(firestoreOptions),
+  config.maxSystemMonthlyCostMicros,
+  config.paidAiCircuitBreakerMicros,
+);
 const worker = new OrchestratorWorkerService(
   config,
   repository,
