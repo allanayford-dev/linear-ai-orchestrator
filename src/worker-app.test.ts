@@ -2,6 +2,7 @@ import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { createWorkerApp } from "./worker-app.js";
 import type { OrchestratorWorkerService } from "./services/orchestrator-worker-service.js";
+import type { VercelCostReconciliationService } from "./services/vercel-cost-reconciliation-service.js";
 
 describe("worker app", () => {
   it("reports health", async () => {
@@ -28,5 +29,21 @@ describe("worker app", () => {
     expect(response.status).toBe(204);
     expect(response.headers["x-orchestrator-outcome"]).toBe("ignored");
     expect(worker.handle).toHaveBeenCalledWith(payload);
+  });
+
+  it("runs a Vercel reconciliation request", async () => {
+    const worker = { handle: vi.fn() } as unknown as OrchestratorWorkerService;
+    const reconciliation = {
+      reconcile: vi.fn().mockResolvedValue({
+        month: "2026-07",
+        gatewayActualCostMicros: 57_618,
+        requestCount: 11,
+      }),
+    } as unknown as VercelCostReconciliationService;
+    const response = await request(createWorkerApp(worker, reconciliation))
+      .post("/internal/reconcile/vercel")
+      .expect(200);
+    expect(response.body.gatewayActualCostMicros).toBe(57_618);
+    expect(reconciliation.reconcile).toHaveBeenCalledTimes(1);
   });
 });

@@ -10,6 +10,14 @@ export interface DashboardData {
   budget: BudgetSnapshot;
   paidAiCircuitBreakerMicros: number;
   paidAiPaused: boolean;
+  gatewaySync: {
+    status: string;
+    error: string | null;
+    syncedAt: string | null;
+    startDate: string | null;
+    endDate: string | null;
+    requestCount: number;
+  };
   thresholds: number[];
   tasks: DashboardRecord[];
   generations: DashboardRecord[];
@@ -32,6 +40,13 @@ export interface ExternalCostUpdate {
   otherCostMicros: number;
 }
 
+export interface GatewayCostSync {
+  gatewayActualCostMicros: number;
+  requestCount: number;
+  startDate: string;
+  endDate: string;
+}
+
 export interface DashboardRepository {
   getDashboard(month: string): Promise<DashboardData>;
   updateBudget(update: BudgetUpdate, actor: string): Promise<void>;
@@ -40,4 +55,6 @@ export interface DashboardRepository {
     update: ExternalCostUpdate,
     actor: string,
   ): Promise<void>;
+  syncGatewayCost(month: string, sync: GatewayCostSync): Promise<void>;
+  recordGatewaySyncFailure(month: string, error: string): Promise<void>;
 }
