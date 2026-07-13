@@ -1,5 +1,12 @@
 import { FieldValue, Firestore, Timestamp } from "@google-cloud/firestore";
 import type { LinearIssue, ModelResult } from "../types/worker.js";
+import type { PricingTier } from "../types/worker.js";
+import {
+  calculateBudget,
+  crossedThresholds,
+  DEFAULT_ALERT_THRESHOLDS,
+  sanitizeThresholds,
+} from "../services/budget-policy.js";
 import type {
   ClaimResult,
   FailedGenerationResult,
@@ -28,7 +35,11 @@ function usageIncrement(usage: ModelResult<unknown>["usage"]): object {
 }
 
 export class FirestoreWorkerRepository implements WorkerRepository {
-  constructor(private readonly firestore: Firestore) {}
+  constructor(
+    private readonly firestore: Firestore,
+    private readonly defaultSystemBudgetMicros = 20_000_000,
+    private readonly defaultPaidAiCircuitBreakerMicros = 18_000_000,
+  ) {}
 
   private async recordGenerationUsage(
     context: GenerationContext,
@@ -44,13 +55,20 @@ export class FirestoreWorkerRepository implements WorkerRepository {
       .doc(`${documentPart(context.projectId)}_${month}`);
     const modelRef = this.firestore.collection("model_usage_monthly")
       .doc(`${documentPart(`${context.provider}:${context.model}`)}_${month}`);
+    const systemRef = this.firestore.collection("system_usage_monthly").doc(month);
+    const externalRef = this.firestore.collection("external_costs_monthly").doc(month);
+    const controlRef = this.firestore.collection("orchestrator_control").doc("global");
 
     await this.firestore.runTransaction(async (transaction) => {
-      const [generation, task, project, model] = await Promise.all([
+      const [generation, task, project, model, system, external, control] =
+        await Promise.all([
         transaction.get(generationRef),
         transaction.get(taskRef),
         transaction.get(projectRef),
         transaction.get(modelRef),
+        transaction.get(systemRef),
+        transaction.get(externalRef),
+        transaction.get(controlRef),
       ]);
       if (skipCompleted && generation.get("status") === "complete") return;
 
@@ -92,6 +110,78 @@ export class FirestoreWorkerRepository implements WorkerRepository {
         ...(!model.exists ? { createdAt: FieldValue.serverTimestamp() } : {}),
         ...increment,
       }, { merge: true });
+      transaction.set(systemRef, {
+        month,
+        ...(!system.exists ? { createdAt: FieldValue.serverTimestamp() } : {}),
+        ...increment,
+      }, { merge: true });
+
+      const budgetMicros = (control.get("budgetMicros") as number | undefined) ??
+        this.defaultSystemBudgetMicros;
+      const paidAiCircuitBreakerMicros =
+        (control.get("paidAiCircuitBreakerMicros") as number | undefined) ??
+        Math.min(this.defaultPaidAiCircuitBreakerMicros, budgetMicros);
+      const thresholds = sanitizeThresholds(
+        (control.get("thresholds") as number[] | undefined) ??
+          DEFAULT_ALERT_THRESHOLDS,
+      );
+      const estimatedBefore =
+        (system.get("estimatedCostMicros") as number | undefined) ?? 0;
+      const sources = {
+        gatewayActualCostMicros:
+          (external.get("gatewayActualCostMicros") as number | undefined) ?? 0,
+        gcpCostMicros:
+          (external.get("gcpCostMicros") as number | undefined) ?? 0,
+        otherCostMicros:
+          (external.get("otherCostMicros") as number | undefined) ?? 0,
+      };
+      const before = calculateBudget({
+        estimatedAiCostMicros: estimatedBefore,
+        ...sources,
+      }, budgetMicros, control.get("paused") === true);
+      const after = calculateBudget({
+        estimatedAiCostMicros: estimatedBefore + usage.estimatedCostMicros,
+        ...sources,
+      }, budgetMicros, control.get("paused") === true);
+      for (const threshold of crossedThresholds(
+        before.percentageUsed,
+        after.percentageUsed,
+        thresholds,
+      )) {
+        transaction.set(
+          this.firestore.collection("budget_alerts").doc(`${month}_${threshold}`),
+          {
+            month,
+            threshold,
+            totalCostMicros: after.totalCostMicros,
+            budgetMicros,
+            source: "model-usage",
+            issueIdentifier: context.issueIdentifier,
+            createdAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+      if (after.totalCostMicros >= budgetMicros) {
+        transaction.set(controlRef, {
+          paused: true,
+          pauseReason:
+            `Monthly $${(budgetMicros / 1_000_000).toFixed(2)} limit reached`,
+          pausedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } else if (
+        context.pricingTier === "paid" &&
+        after.totalCostMicros >= paidAiCircuitBreakerMicros
+      ) {
+        transaction.set(controlRef, {
+          paidAiPaused: true,
+          paidAiPauseReason:
+            `Paid AI safety limit of $${(paidAiCircuitBreakerMicros / 1_000_000).toFixed(2)} reached`,
+          paidAiPausedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
     });
   }
 
@@ -195,23 +285,48 @@ export class FirestoreWorkerRepository implements WorkerRepository {
     maxTaskMicros: number,
     maxProjectMicros: number,
     maxTaskTokens: number,
+    maxSystemMicros: number,
+    paidAiCircuitBreakerMicros: number,
+    pricingTier: PricingTier,
   ): Promise<void> {
     const month = monthKey();
-    const [task, project] = await Promise.all([
+    const [task, project, system, external, control] = await Promise.all([
       this.firestore.collection("task_usage").doc(taskId).get(),
       this.firestore.collection("project_usage_monthly")
         .doc(`${documentPart(projectId)}_${month}`).get(),
+      this.firestore.collection("system_usage_monthly").doc(month).get(),
+      this.firestore.collection("external_costs_monthly").doc(month).get(),
+      this.firestore.collection("orchestrator_control").doc("global").get(),
     ]);
     const taskCost = (task.get("estimatedCostMicros") as number | undefined) ?? 0;
     const taskTokens = (task.get("totalTokens") as number | undefined) ?? 0;
     const projectCost = (project.get("estimatedCostMicros") as number | undefined) ?? 0;
+    const budgetMicros = (control.get("budgetMicros") as number | undefined) ??
+      maxSystemMicros;
+    const paidLimit =
+      (control.get("paidAiCircuitBreakerMicros") as number | undefined) ??
+      paidAiCircuitBreakerMicros;
+    const systemBudget = calculateBudget({
+      estimatedAiCostMicros:
+        (system.get("estimatedCostMicros") as number | undefined) ?? 0,
+      gatewayActualCostMicros:
+        (external.get("gatewayActualCostMicros") as number | undefined) ?? 0,
+      gcpCostMicros: (external.get("gcpCostMicros") as number | undefined) ?? 0,
+      otherCostMicros: (external.get("otherCostMicros") as number | undefined) ?? 0,
+    }, budgetMicros, control.get("paused") === true);
     if (
+      systemBudget.paused ||
+      systemBudget.totalCostMicros >= systemBudget.budgetMicros ||
+      (pricingTier === "paid" && (
+        control.get("paidAiPaused") === true ||
+        systemBudget.totalCostMicros >= paidLimit
+      )) ||
       taskCost >= maxTaskMicros ||
       projectCost >= maxProjectMicros ||
       taskTokens >= maxTaskTokens
     ) {
       const error = new Error(
-        `Internal AI budget reached (task $${(taskCost / 1_000_000).toFixed(4)}, project $${(projectCost / 1_000_000).toFixed(4)}, task tokens ${taskTokens})`,
+        `Internal budget reached (system $${(systemBudget.totalCostMicros / 1_000_000).toFixed(4)} of $${(systemBudget.budgetMicros / 1_000_000).toFixed(2)}, paid AI stop $${(paidLimit / 1_000_000).toFixed(2)}, task $${(taskCost / 1_000_000).toFixed(4)}, project $${(projectCost / 1_000_000).toFixed(4)}, task tokens ${taskTokens})`,
       );
       error.name = "BudgetExceededError";
       throw error;

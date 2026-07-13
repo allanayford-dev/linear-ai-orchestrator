@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Orchestra Control</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="login" class="login-shell">
+      <section class="login-card">
+        <div class="brand-mark">OA</div>
+        <p class="eyebrow">LINEAR AI ORCHESTRATOR</p>
+        <h1>See every task.<br />Control every dollar.</h1>
+        <p class="muted">A private operations console for execution health, model usage, and monthly budget protection.</p>
+        <button id="sign-in" class="primary-button">Continue with Google</button>
+        <p id="login-error" class="error-text" role="alert"></p>
+      </section>
+    </div>
+
+    <div id="app" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="brand"><span class="brand-mark small">OA</span><span>Orchestra</span></div>
+        <nav>
+          <button class="nav-item active" data-view="overview">Overview</button>
+          <button class="nav-item" data-view="tasks">Task execution</button>
+          <button class="nav-item" data-view="costs">Costs & models</button>
+          <button class="nav-item" data-view="controls">Budget controls</button>
+        </nav>
+        <div class="sidebar-footer">
+          <div id="user-name" class="user-name"></div>
+          <div id="user-email" class="muted compact"></div>
+          <button id="sign-out" class="text-button">Sign out</button>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">OPERATIONS DASHBOARD</p>
+            <h2 id="page-title">Overview</h2>
+          </div>
+          <div class="topbar-actions">
+            <input id="month" type="month" aria-label="Reporting month" />
+            <button id="refresh" class="secondary-button">Refresh</button>
+          </div>
+        </header>
+
+        <div id="message" class="message hidden" role="status"></div>
+
+        <section id="view-overview" class="view active">
+          <div class="hero-grid">
+            <article class="panel budget-panel">
+              <div class="panel-heading"><span>Monthly protection</span><span id="budget-state" class="status-pill"></span></div>
+              <div class="budget-amount"><span id="spent">$0.00</span><span class="muted"> / <span id="budget">$20.00</span></span></div>
+              <div class="meter"><div id="budget-meter"></div></div>
+              <div class="budget-foot"><span id="percentage">0% used</span><span id="remaining">$20.00 remaining</span></div>
+            </article>
+            <article class="panel focus-panel">
+              <p class="eyebrow">CURRENT SIGNAL</p>
+              <h3 id="signal-title">System healthy</h3>
+              <p id="signal-copy" class="muted">New tasks can be claimed and executed.</p>
+            </article>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric"><span>Model calls</span><strong id="metric-calls">0</strong></article>
+            <article class="metric"><span>Total tokens</span><strong id="metric-tokens">0</strong></article>
+            <article class="metric"><span>Active tasks</span><strong id="metric-active">0</strong></article>
+            <article class="metric"><span>Needs my action</span><strong id="metric-action">0</strong></article>
+          </div>
+
+          <div class="content-grid">
+            <article class="panel span-two">
+              <div class="panel-heading"><span>Latest executions</span><button class="text-button" data-open-view="tasks">View all</button></div>
+              <div id="recent-tasks" class="table-wrap"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><span>Budget alerts</span></div>
+              <div id="alerts" class="stack"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="view-tasks" class="view">
+          <article class="panel">
+            <div class="panel-heading"><span>Task execution ledger</span><span id="task-count" class="muted compact"></span></div>
+            <div id="all-tasks" class="table-wrap"></div>
+          </article>
+        </section>
+
+        <section id="view-costs" class="view">
+          <div class="content-grid">
+            <article class="panel span-two">
+              <div class="panel-heading"><span>Spend by model</span></div>
+              <div id="models" class="model-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><span>Cost sources</span></div>
+              <div id="cost-sources" class="stack"></div>
+            </article>
+          </div>
+          <article class="panel section-gap">
+            <div class="panel-heading"><span>Generation ledger</span><span id="generation-count" class="muted compact"></span></div>
+            <div id="generations" class="table-wrap"></div>
+          </article>
+        </section>
+
+        <section id="view-controls" class="view">
+          <div class="content-grid">
+            <article class="panel">
+              <div class="panel-heading"><span>$20 circuit breaker</span></div>
+              <label>Monthly total limit (USD)<input id="budget-input" type="number" min="1" step="1" /></label>
+              <label>Paid AI safety stop (USD)<input id="paid-stop-input" type="number" min="1" step="1" /></label>
+              <label>Alert thresholds (%)<input id="threshold-input" type="text" value="50,75,90,100" /></label>
+              <label class="toggle-row"><span>Pause new executions</span><input id="paused-input" type="checkbox" /></label>
+              <button id="save-budget" class="primary-button">Save protection settings</button>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><span>Actual external costs</span></div>
+              <p class="muted compact">Enter billed amounts. The dashboard uses the greater of Gateway actual and internal AI estimate, preventing double-counting.</p>
+              <label>Vercel AI Gateway (USD)<input id="gateway-cost" type="number" min="0" step="0.000001" /></label>
+              <label>Google Cloud (USD)<input id="gcp-cost" type="number" min="0" step="0.01" /></label>
+              <label>Other hosting/providers (USD)<input id="other-cost" type="number" min="0" step="0.01" /></label>
+              <button id="save-costs" class="secondary-button">Update actual costs</button>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

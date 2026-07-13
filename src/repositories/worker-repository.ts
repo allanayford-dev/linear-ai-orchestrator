@@ -44,6 +44,9 @@ export interface WorkerRepository {
     maxTaskMicros: number,
     maxProjectMicros: number,
     maxTaskTokens: number,
+    maxSystemMicros: number,
+    paidAiCircuitBreakerMicros: number,
+    pricingTier: PricingTier,
   ): Promise<void>;
   completeTask(taskId: string, deliveryId: string, status: string, details: object): Promise<void>;
   failTask(taskId: string, deliveryId: string, error: Error): Promise<void>;

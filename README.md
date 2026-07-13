@@ -1,7 +1,8 @@
 # Linear AI Orchestrator
 
-Two-service Cloud Run starter for receiving signed Linear webhooks and safely
-orchestrating Todo issues through Google Cloud Pub/Sub.
+Three-service Cloud Run platform for receiving signed Linear webhooks, safely
+orchestrating Todo issues through Google Cloud Pub/Sub, and monitoring execution
+and cost through a Firebase-authenticated operations dashboard.
 
 ## Current scope
 
@@ -26,6 +27,10 @@ orchestrating Todo issues through Google Cloud Pub/Sub.
 - Candidate results to `In Review` (never automatically `Done`)
 - Per-generation, task, project-month, and model-month usage records
 - Per-task token and spending gates plus a per-project spending gate
+- Firebase Google sign-in with an explicit dashboard email allowlist
+- Task, generation, model, project, alert, and cost dashboard views
+- $18 paid-AI safety stop, $20 total ceiling, and 50/75/90/100% alerts
+- Manual actual-cost inputs for AI Gateway, Google Cloud, and other providers
 
 The first worker produces text-based candidate results. It does not yet clone a
 repository, edit code, run tests, or deploy changes; work requiring those tools
@@ -44,6 +49,10 @@ reserves some such paths and can intercept them before they reach the container.
 | `generations` | Idempotent ledger entry for every model call and result |
 | `project_usage_monthly` | Monthly project token and estimated-cost totals |
 | `model_usage_monthly` | Monthly model token and estimated-cost totals |
+| `system_usage_monthly` | System-wide model totals used by the circuit breaker |
+| `external_costs_monthly` | Actual Gateway, GCP, and other monthly costs |
+| `budget_alerts` | Deterministic threshold-crossing alert records |
+| `orchestrator_control` | Monthly budget, alert thresholds, and pause state |
 
 Costs use integer micro-dollars. Every provider attempt has its own deterministic
 generation ID and is recorded as pending before the model request, then completed
@@ -56,6 +65,10 @@ The Cloud Shell setup, IAM grants, secrets, private Cloud Run deployment, and
 authenticated Pub/Sub push configuration are in
 [`docs/deploy-worker.md`](docs/deploy-worker.md). Use `npm run dev:worker` or
 `npm run start:worker` for the worker entry point.
+
+Dashboard authentication, deployment, Hosting rewrite, and verification are in
+[`docs/deploy-dashboard.md`](docs/deploy-dashboard.md). Use
+`npm run dev:dashboard` or `npm run start:dashboard` for its entry point.
 
 ## Local development
 
