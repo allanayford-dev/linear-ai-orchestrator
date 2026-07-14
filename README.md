@@ -15,7 +15,7 @@ and cost through a Firebase-authenticated operations dashboard.
 - Zero-value task usage records ready for later model-call aggregation
 - Pub/Sub publication to `orchestrator-tasks`
 - Duplicate delivery protection using `Linear-Delivery`
-- Private Pub/Sub push worker with Firestore task leases
+- Private Pub/Sub push worker with Firestore task leases and dead-letter visibility
 - `Todo` -> `In Progress` claims
 - Opt-in free-tier routing and simple execution with `gemini-3.1-flash-lite`
 - One-time fallback to `zai/glm-4.7-flashx` for Gemini quota/service failures

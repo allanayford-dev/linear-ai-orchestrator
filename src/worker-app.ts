@@ -1,8 +1,12 @@
 import express, { type Express } from "express";
 import type { OrchestratorWorkerService } from "./services/orchestrator-worker-service.js";
+import type { DeadLetterService } from "./services/dead-letter-service.js";
 import { decodeWorkEvent, parsePubSubEnvelope } from "./types/worker.js";
 
-export function createWorkerApp(worker: OrchestratorWorkerService): Express {
+export function createWorkerApp(
+  worker: OrchestratorWorkerService,
+  deadLetters: DeadLetterService,
+): Express {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "2mb" }));
@@ -29,6 +33,16 @@ export function createWorkerApp(worker: OrchestratorWorkerService): Express {
     } catch (error) {
       console.error("Worker delivery failed", error);
       response.status(500).json({ error: "delivery failed" });
+    }
+  });
+
+  app.post("/pubsub/dead-letter", async (request, response) => {
+    try {
+      const outcome = await deadLetters.record(request.body);
+      response.status(204).set("X-Orchestrator-Outcome", outcome).send();
+    } catch (error) {
+      console.error("Dead-letter persistence failed", error);
+      response.status(500).json({ error: "dead-letter persistence failed" });
     }
   });
 

@@ -47,7 +47,7 @@ export class FirestoreDashboardRepository implements DashboardRepository {
   ) {}
 
   async getDashboard(month: string): Promise<DashboardData> {
-    const [system, external, control, tasks, generations, projects, models, alerts] =
+    const [system, external, control, tasks, generations, projects, models, alerts, deadLetters] =
       await Promise.all([
         this.firestore.collection("system_usage_monthly").doc(month).get(),
         this.firestore.collection("external_costs_monthly").doc(month).get(),
@@ -57,6 +57,7 @@ export class FirestoreDashboardRepository implements DashboardRepository {
         this.firestore.collection("project_usage_monthly").where("month", "==", month).get(),
         this.firestore.collection("model_usage_monthly").where("month", "==", month).get(),
         this.firestore.collection("budget_alerts").where("month", "==", month).get(),
+        this.firestore.collection("dead_letters").orderBy("receivedAt", "desc").limit(100).get(),
       ]);
 
     const budgetMicros = numberValue(control.get("budgetMicros")) ||
@@ -88,6 +89,7 @@ export class FirestoreDashboardRepository implements DashboardRepository {
       models: records(models),
       alerts: records(alerts).sort((left, right) =>
         numberValue(right.threshold) - numberValue(left.threshold)),
+      deadLetters: records(deadLetters),
     };
   }
 

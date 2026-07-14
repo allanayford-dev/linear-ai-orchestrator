@@ -135,7 +135,82 @@ Cloud Run validates the Google-signed identity token before the request reaches
 the application. A 2xx response acknowledges the message; transient worker
 failures return 500 and are retried by Pub/Sub.
 
-## 6. Pilot safely
+## 6. Add exhausted-delivery handling
+
+Pub/Sub dead-letter forwarding is best-effort. Five is the platform's minimum
+configured delivery-attempt count. The Pub/Sub service agent must be allowed to
+publish to the dead-letter topic and acknowledge the source subscription or
+attempt counting and forwarding will not operate correctly.
+
+```bash
+PUBSUB_SERVICE_AGENT="service-$PROJECT_NUMBER@gcp-sa-pubsub.iam.gserviceaccount.com"
+
+gcloud pubsub topics describe orchestrator-dead-letter \
+  --project="$PROJECT" >/dev/null 2>&1 || \
+gcloud pubsub topics create orchestrator-dead-letter --project="$PROJECT"
+
+gcloud pubsub topics add-iam-policy-binding orchestrator-dead-letter \
+  --project="$PROJECT" \
+  --member="serviceAccount:$PUBSUB_SERVICE_AGENT" \
+  --role=roles/pubsub.publisher
+
+gcloud pubsub subscriptions add-iam-policy-binding orchestrator-worker \
+  --project="$PROJECT" \
+  --member="serviceAccount:$PUBSUB_SERVICE_AGENT" \
+  --role=roles/pubsub.subscriber
+
+gcloud pubsub subscriptions describe orchestrator-dead-letter-monitor \
+  --project="$PROJECT" >/dev/null 2>&1 || \
+gcloud pubsub subscriptions create orchestrator-dead-letter-monitor \
+  --project="$PROJECT" \
+  --topic=orchestrator-dead-letter \
+  --push-endpoint="$WORKER_URL/pubsub/dead-letter" \
+  --push-auth-service-account="pubsub-push@$PROJECT.iam.gserviceaccount.com" \
+  --push-auth-token-audience="$WORKER_URL" \
+  --ack-deadline=60 \
+  --min-retry-delay=10s \
+  --max-retry-delay=600s \
+  --message-retention-duration=7d \
+  --expiration-period=never
+
+gcloud pubsub subscriptions update orchestrator-worker \
+  --project="$PROJECT" \
+  --dead-letter-topic=orchestrator-dead-letter \
+  --max-delivery-attempts=5
+```
+
+Verify the source policy and authenticated dead-letter push endpoint:
+
+```bash
+gcloud pubsub subscriptions describe orchestrator-worker \
+  --project="$PROJECT" \
+  --format='yaml(deadLetterPolicy,retryPolicy,pushConfig)'
+
+gcloud pubsub subscriptions describe orchestrator-dead-letter-monitor \
+  --project="$PROJECT" \
+  --format='yaml(topic,pushConfig,retryPolicy)'
+```
+
+For a non-destructive smoke test, publish a diagnostic message directly to the
+dead-letter topic. This tests storage and dashboard visibility without forcing a
+real task to fail five times.
+
+```bash
+gcloud pubsub topics publish orchestrator-dead-letter \
+  --project="$PROJECT" \
+  --message='{"deliveryId":"dead-letter-smoke-test","source":"manual-test","receivedAt":"2026-07-13T00:00:00.000Z","payload":{"data":{"identifier":"DLQ-SMOKE"}}}' \
+  --attribute=CloudPubSubDeadLetterSourceSubscription=projects/$PROJECT/subscriptions/orchestrator-worker,CloudPubSubDeadLetterSourceSubscriptionProject=$PROJECT,CloudPubSubDeadLetterSourceDeliveryCount=5
+```
+
+Open **Task execution** in the dashboard and confirm `DLQ-SMOKE` appears under
+**Exhausted deliveries**. Repeating the same Pub/Sub delivery is idempotent.
+Malformed deliveries are retained with diagnostic errors and acknowledged so
+the dead-letter subscription itself cannot loop forever.
+
+Do not automatically replay dead letters. Diagnose and fix the underlying
+problem, then republish only the original work event that is safe to retry.
+
+## 7. Pilot safely
 
 Create one inexpensive Linear issue in `Todo` with a complete description. It
 should move through `In Progress` and end in either:
