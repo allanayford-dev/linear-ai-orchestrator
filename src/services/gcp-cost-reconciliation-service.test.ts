@@ -55,4 +55,33 @@ describe("GcpCostReconciliationService", () => {
       failure,
     );
   });
+
+  it("keeps an unchanged monthly total idempotent across reconciliations", async () => {
+    const result = {
+      costMicros: 2500,
+      currency: "USD",
+      rowCount: 3,
+      table,
+      projectId,
+      queryStart: "2026-07-01T00:00:00.000Z",
+      queryEnd: "2026-08-01T00:00:00.000Z",
+    };
+    const client = { getMonth: vi.fn().mockResolvedValue(result) };
+    const repository = { complete: vi.fn(), fail: vi.fn() };
+    const service = new GcpCostReconciliationService(
+      client as GcpBillingClient,
+      repository as GcpCostRepository,
+      table,
+      projectId,
+    );
+
+    await service.reconcile("2026-07");
+    await service.reconcile("2026-07");
+
+    const first = repository.complete.mock.calls[0][0];
+    const second = repository.complete.mock.calls[1][0];
+    expect(first.costMicros).toBe(2500);
+    expect(second.costMicros).toBe(2500);
+    expect(second.attemptId).not.toBe(first.attemptId);
+  });
 });

@@ -70,13 +70,15 @@ export class FirestoreGcpCostRepository implements GcpCostRepository {
         gcpCostError: FieldValue.delete(),
         gcpCostUpdatedAt: FieldValue.serverTimestamp(),
         gcpCostAttemptedAt: FieldValue.serverTimestamp(),
-        updatedBy: "cloud-scheduler",
+        updatedBy: "orchestrator-worker",
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
       transaction.create(auditRef, {
         ...item,
         provider: "google-cloud",
         source: "bigquery-standard-export",
+        actor: "orchestrator-worker",
+        trigger: "authenticated-http",
         status: "complete",
         createdAt: FieldValue.serverTimestamp(),
       });
@@ -142,6 +144,8 @@ export class FirestoreGcpCostRepository implements GcpCostRepository {
       projectId,
       provider: "google-cloud",
       source: "bigquery-standard-export",
+      actor: "orchestrator-worker",
+      trigger: "authenticated-http",
       status: "error",
       errorName: error.name,
       errorMessage: error.message.slice(0, 1000),

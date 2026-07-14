@@ -122,6 +122,17 @@ Successful runs create immutable records in `cost_reconciliations` and update:
 - `external_costs_monthly/{YYYY-MM}.gcpCostMicros`
 - `external_costs_monthly/{YYYY-MM}.gcpCostUpdatedAt`
 - `external_costs_monthly/{YYYY-MM}.gcpCostStatus`
-- `system_usage_monthly/{YYYY-MM}` through the existing budget calculation
 
 Refresh **Costs & models**. Google Cloud should show `fresh`, the BigQuery source, and the last reconciliation time. Manual dashboard changes are also audited and are labelled `manual`.
+
+## Rollback
+
+Pause the schedule without deleting its history:
+
+```sh
+gcloud scheduler jobs pause gcp-cost-reconcile-6h \
+  --project=glm-api-server \
+  --location=europe-west1
+```
+
+Then route the worker back to its preceding healthy revision in Cloud Run. The last valid Google Cloud total remains available in Firestore. If an urgent correction is needed, use **Budget controls → Actual external costs**; the dashboard records the previous and replacement Google Cloud values in `cost_reconciliations` and labels the source `manual`.
