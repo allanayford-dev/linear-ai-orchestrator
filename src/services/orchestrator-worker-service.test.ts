@@ -36,6 +36,12 @@ const config: WorkerConfig = {
   maxProjectMonthlyCostMicros: 5_000_000,
   maxSystemMonthlyCostMicros: 20_000_000,
   paidAiCircuitBreakerMicros: 18_000_000,
+  gcpBilling: {
+    table: "glm-api-server.billing_export_eu.gcp_billing_export_v1_test",
+    location: "EU",
+    projectId: "glm-api-server",
+    maximumBytesBilled: 100_000_000,
+  },
 };
 
 function issue(state = "Todo"): LinearIssue {

@@ -34,6 +34,12 @@ interface DashboardData {
   models: RecordValue[];
   alerts: RecordValue[];
   deadLetters: RecordValue[];
+  gcpCostFreshness: {
+    status: "fresh" | "stale" | "pending" | "manual" | "error";
+    source: string;
+    updatedAt: string | null;
+    error: string | null;
+  };
 }
 
 const byId = <T extends HTMLElement>(id: string) =>
@@ -193,6 +199,10 @@ function render(data: DashboardData) {
     ["Google Cloud", budget.gcpCostMicros],
     ["Other", budget.otherCostMicros],
   ].map(([label, value]) => `<div class="stack-row"><span>${label}</span><strong>${dollars(Number(value), 6)}</strong></div>`).join("");
+  const freshness = data.gcpCostFreshness;
+  byId("gcp-freshness").textContent = freshness.status === "pending"
+    ? "Google Cloud billing export is pending its first reconciliation."
+    : `Google Cloud: ${freshness.status} · ${freshness.source} · ${timestamp(freshness.updatedAt)}${freshness.error ? ` · ${freshness.error}` : ""}`;
   const syncCopy = "Vercel cost is captured after every orchestrator request. Use a Vercel CSV total here for an independent reconciliation check.";
   byId("gateway-sync").textContent = syncCopy;
   byId("gateway-sync-control").textContent = syncCopy;

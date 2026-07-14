@@ -23,6 +23,12 @@ export interface WorkerConfig {
   maxProjectMonthlyCostMicros: number;
   maxSystemMonthlyCostMicros: number;
   paidAiCircuitBreakerMicros: number;
+  gcpBilling: {
+    table: string;
+    location: string;
+    projectId: string;
+    maximumBytesBilled: number;
+  };
 }
 
 function required(name: string): string {
@@ -89,5 +95,11 @@ export function loadWorkerConfig(): WorkerConfig {
       "PAID_AI_CIRCUIT_BREAKER_MICROS",
       18_000_000,
     ),
+    gcpBilling: {
+      table: process.env.GCP_BILLING_TABLE?.trim() || "",
+      location: process.env.GCP_BILLING_LOCATION?.trim() || "EU",
+      projectId: process.env.GCP_BILLING_PROJECT_FILTER?.trim() || projectId || "",
+      maximumBytesBilled: integer("GCP_BILLING_MAX_BYTES_BILLED", 100_000_000),
+    },
   };
 }

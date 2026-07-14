@@ -1,11 +1,14 @@
 import express, { type Express } from "express";
 import type { OrchestratorWorkerService } from "./services/orchestrator-worker-service.js";
 import type { DeadLetterService } from "./services/dead-letter-service.js";
+import type { GcpCostReconciliationService } from "./services/gcp-cost-reconciliation-service.js";
+import { currentMonth } from "./services/budget-policy.js";
 import { decodeWorkEvent, parsePubSubEnvelope } from "./types/worker.js";
 
 export function createWorkerApp(
   worker: OrchestratorWorkerService,
   deadLetters: DeadLetterService,
+  gcpCosts: GcpCostReconciliationService,
 ): Express {
   const app = express();
   app.disable("x-powered-by");
@@ -43,6 +46,18 @@ export function createWorkerApp(
     } catch (error) {
       console.error("Dead-letter persistence failed", error);
       response.status(500).json({ error: "dead-letter persistence failed" });
+    }
+  });
+
+  app.post("/internal/reconcile/gcp", async (request, response) => {
+    const month = typeof request.query.month === "string"
+      ? request.query.month
+      : currentMonth();
+    try {
+      response.status(200).json(await gcpCosts.reconcile(month));
+    } catch (error) {
+      console.error("Google Cloud cost reconciliation failed", error);
+      response.status(502).json({ error: "Google Cloud cost reconciliation failed" });
     }
   });
 

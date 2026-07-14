@@ -4,6 +4,7 @@ import {
   Timestamp,
   type QuerySnapshot,
 } from "@google-cloud/firestore";
+import { randomUUID } from "node:crypto";
 import {
   calculateBudget,
   crossedThresholds,
@@ -74,6 +75,20 @@ export class FirestoreDashboardRepository implements DashboardRepository {
       gcpCostMicros: numberValue(external.get("gcpCostMicros")),
       otherCostMicros: numberValue(external.get("otherCostMicros")),
     }, budgetMicros, control.get("paused") === true);
+    const gcpUpdatedAt = external.get("gcpCostUpdatedAt") as Timestamp | undefined;
+    const gcpSource = typeof external.get("gcpCostSource") === "string"
+      ? external.get("gcpCostSource") as string
+      : "pending";
+    const rawGcpStatus = external.get("gcpCostStatus");
+    const gcpStatus = rawGcpStatus === "error"
+      ? "error"
+      : gcpSource === "manual-dashboard"
+        ? "manual"
+        : !gcpUpdatedAt
+          ? "pending"
+          : Date.now() - gcpUpdatedAt.toMillis() > 12 * 60 * 60 * 1000
+            ? "stale"
+            : "fresh";
 
     return {
       month,
@@ -90,6 +105,14 @@ export class FirestoreDashboardRepository implements DashboardRepository {
       alerts: records(alerts).sort((left, right) =>
         numberValue(right.threshold) - numberValue(left.threshold)),
       deadLetters: records(deadLetters),
+      gcpCostFreshness: {
+        status: gcpStatus,
+        source: gcpSource,
+        updatedAt: gcpUpdatedAt?.toDate().toISOString() ?? null,
+        error: typeof external.get("gcpCostError") === "string"
+          ? external.get("gcpCostError") as string
+          : null,
+      },
     };
   }
 
@@ -160,7 +183,24 @@ export class FirestoreDashboardRepository implements DashboardRepository {
         ...update,
         updatedBy: actor,
         updatedAt: FieldValue.serverTimestamp(),
+        gcpCostSource: "manual-dashboard",
+        gcpCostStatus: "manual",
+        gcpCostError: FieldValue.delete(),
+        gcpCostUpdatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
+      transaction.create(
+        this.firestore.collection("cost_reconciliations").doc(randomUUID()),
+        {
+          month,
+          provider: "google-cloud",
+          source: "manual-dashboard",
+          status: "complete",
+          actor,
+          previousGcpCostMicros: numberValue(external.get("gcpCostMicros")),
+          gcpCostMicros: update.gcpCostMicros,
+          createdAt: FieldValue.serverTimestamp(),
+        },
+      );
       for (const threshold of crossedThresholds(
         before.percentageUsed,
         after.percentageUsed,
