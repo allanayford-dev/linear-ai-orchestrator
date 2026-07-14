@@ -17,6 +17,12 @@ export interface DashboardData {
   models: DashboardRecord[];
   alerts: DashboardRecord[];
   deadLetters: DashboardRecord[];
+  gcpCostFreshness: {
+    status: "fresh" | "stale" | "pending" | "manual" | "error";
+    source: string;
+    updatedAt: string | null;
+    error: string | null;
+  };
 }
 
 export interface BudgetUpdate {

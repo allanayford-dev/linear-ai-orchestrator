@@ -3,15 +3,27 @@ import { describe, expect, it, vi } from "vitest";
 import { createWorkerApp } from "./worker-app.js";
 import type { OrchestratorWorkerService } from "./services/orchestrator-worker-service.js";
 import type { DeadLetterService } from "./services/dead-letter-service.js";
+import type { GcpCostReconciliationService } from "./services/gcp-cost-reconciliation-service.js";
 
 function deadLetters(outcome: "recorded" | "duplicate" = "recorded") {
   return { record: vi.fn().mockResolvedValue(outcome) } as unknown as DeadLetterService;
 }
 
+function gcpCosts() {
+  return {
+    reconcile: vi.fn().mockResolvedValue({
+      attemptId: "attempt-1",
+      costMicros: 1234,
+      currency: "USD",
+      rowCount: 4,
+    }),
+  } as unknown as GcpCostReconciliationService;
+}
+
 describe("worker app", () => {
   it("reports health", async () => {
     const worker = { handle: vi.fn() } as unknown as OrchestratorWorkerService;
-    await request(createWorkerApp(worker, deadLetters()))
+    await request(createWorkerApp(worker, deadLetters(), gcpCosts()))
       .get("/health")
       .expect(200, { status: "ok", service: "orchestrator-worker" });
   });
@@ -26,7 +38,7 @@ describe("worker app", () => {
       receivedAt: new Date().toISOString(),
       payload: { action: "create", type: "Issue", data: { id: "issue-1" }, webhookTimestamp: Date.now() },
     };
-    const response = await request(createWorkerApp(worker, deadLetters())).post("/pubsub/push").send({
+    const response = await request(createWorkerApp(worker, deadLetters(), gcpCosts())).post("/pubsub/push").send({
       message: { messageId: "message-1", data: Buffer.from(JSON.stringify(payload)).toString("base64") },
     });
 
@@ -50,7 +62,7 @@ describe("worker app", () => {
       receivedAt: new Date().toISOString(),
       payload: { action: "create", type: "Issue", data: { id: "issue-1" } },
     };
-    await request(createWorkerApp(worker, deadLetters())).post("/pubsub/push").send({
+    await request(createWorkerApp(worker, deadLetters(), gcpCosts())).post("/pubsub/push").send({
       message: { messageId: "message-5", data: Buffer.from(JSON.stringify(payload)).toString("base64") },
       subscription: "projects/project/subscriptions/orchestrator-worker",
       deliveryAttempt: 5,
@@ -76,7 +88,7 @@ describe("worker app", () => {
       payload: { action: "create", type: "Issue", data: { id: "issue-1" } },
     };
 
-    await request(createWorkerApp(worker, deadLetters())).post("/pubsub/push").send({
+    await request(createWorkerApp(worker, deadLetters(), gcpCosts())).post("/pubsub/push").send({
       message: { messageId: "message-limit", data: Buffer.from(JSON.stringify(payload)).toString("base64") },
       deliveryAttempt: 5,
     }).expect(500, { error: "delivery failed" });
@@ -92,7 +104,7 @@ describe("worker app", () => {
       },
       subscription: "projects/project/subscriptions/orchestrator-dead-letter-monitor",
     };
-    const response = await request(createWorkerApp(worker, recorder))
+    const response = await request(createWorkerApp(worker, recorder, gcpCosts()))
       .post("/pubsub/dead-letter")
       .send(body);
 
@@ -104,12 +116,23 @@ describe("worker app", () => {
   it("passes malformed dead-letter bodies to the recorder and acknowledges them", async () => {
     const worker = { handle: vi.fn() } as unknown as OrchestratorWorkerService;
     const recorder = deadLetters();
-    const response = await request(createWorkerApp(worker, recorder))
+    const response = await request(createWorkerApp(worker, recorder, gcpCosts()))
       .post("/pubsub/dead-letter")
       .send({ unexpected: true });
 
     expect(response.status).toBe(204);
     expect(recorder.record).toHaveBeenCalledWith({ unexpected: true });
+  });
+
+  it("runs an internal Google Cloud cost reconciliation for a requested month", async () => {
+    const worker = { handle: vi.fn() } as unknown as OrchestratorWorkerService;
+    const costs = gcpCosts();
+    const response = await request(createWorkerApp(worker, deadLetters(), costs))
+      .post("/internal/reconcile/gcp?month=2026-07")
+      .expect(200);
+
+    expect(response.body).toMatchObject({ attemptId: "attempt-1", costMicros: 1234 });
+    expect(costs.reconcile).toHaveBeenCalledWith("2026-07");
   });
 
 });
