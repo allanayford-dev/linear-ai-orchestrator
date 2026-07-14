@@ -61,5 +61,18 @@ export function createWorkerApp(
     }
   });
 
+  app.post("/internal/reconcile/linear-states", async (request, response) => {
+    const rawLimit = typeof request.query.limit === "string"
+      ? Number(request.query.limit)
+      : 100;
+    try {
+      response.status(200).json(await worker.reconcileLinearStates(rawLimit));
+    } catch (error) {
+      console.error("Linear state reconciliation failed", error);
+      const message = error instanceof Error ? error.message : "reconciliation failed";
+      response.status(message.startsWith("limit must") ? 400 : 502).json({ error: message });
+    }
+  });
+
   return app;
 }

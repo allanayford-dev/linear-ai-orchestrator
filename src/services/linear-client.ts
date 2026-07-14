@@ -41,7 +41,7 @@ export class LinearGraphQlClient implements LinearClient {
       title: string;
       description: string | null;
       url: string;
-      state: { id: string; name: string };
+      state: { id: string; name: string; type: string };
       team: { id: string; states: { nodes: Array<{ id: string; name: string; type: string }> } };
       project: { id: string; name: string } | null;
       labels: { nodes: Array<{ id: string; name: string }> };
@@ -49,7 +49,7 @@ export class LinearGraphQlClient implements LinearClient {
       `query WorkerIssue($id: String!) {
         issue(id: $id) {
           id identifier title description url
-          state { id name }
+          state { id name type }
           team { id states { nodes { id name type } } }
           project { id name }
           labels { nodes { id name } }
@@ -75,7 +75,7 @@ export class LinearGraphQlClient implements LinearClient {
       }`,
       { id: issue.id, stateId: state.id },
     );
-    issue.state = { id: state.id, name: state.name };
+    issue.state = { id: state.id, name: state.name, type: state.type };
   }
 
   async addComment(issueId: string, body: string): Promise<void> {

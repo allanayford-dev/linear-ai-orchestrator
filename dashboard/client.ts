@@ -66,6 +66,17 @@ const html = (value: unknown) => text(value)
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;");
 const statusClass = (value: unknown) => text(value).toLowerCase().replaceAll(" ", "-");
+const normalizedState = (value: unknown) => text(value)
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "_")
+  .replace(/^_+|_+$/g, "");
+const taskLinearState = (task: RecordValue) =>
+  task.currentLinearStateName ?? task.stateName ?? "Unknown";
+const taskLinearStateNormalized = (task: RecordValue) =>
+  typeof task.currentLinearStateNormalized === "string"
+    ? task.currentLinearStateNormalized
+    : normalizedState(taskLinearState(task));
 const timestamp = (value: unknown) => {
   if (typeof value !== "string") return "—";
   const date = new Date(value);
@@ -100,10 +111,11 @@ async function api(path: string, options: RequestInit = {}) {
 function taskTable(tasks: RecordValue[], limit?: number) {
   const rows = typeof limit === "number" ? tasks.slice(0, limit) : tasks;
   if (!rows.length) return '<div class="empty">No task executions recorded yet.</div>';
-  return `<table><thead><tr><th>Issue</th><th>Task</th><th>Status</th><th>Delivery</th><th>Updated</th></tr></thead><tbody>${rows.map((task) => `
+  return `<table><thead><tr><th>Issue</th><th>Task</th><th>Linear state</th><th>Execution</th><th>Delivery</th><th>Updated</th></tr></thead><tbody>${rows.map((task) => `
     <tr>
       <td>${html(task.issueIdentifier)}</td>
       <td>${html(task.title)}</td>
+      <td><span class="chip ${taskLinearStateNormalized(task)}">${html(taskLinearState(task))}</span></td>
       <td><span class="chip ${statusClass(task.orchestrationStatus)}">${html(task.orchestrationStatus)}</span></td>
       <td>attempt ${integer(task.deliveryAttempt || 1)}${Number(task.recoveryCount ?? 0) > 0 ? ` · recovered ${integer(task.recoveryCount)}` : ""}</td>
       <td>${html(timestamp(task.updatedAt))}</td>
@@ -165,8 +177,9 @@ function render(data: DashboardData) {
   const modelCalls = data.models.reduce((sum, item) => sum + Number(item.modelCalls ?? 0), 0);
   const totalTokens = data.models.reduce((sum, item) => sum + Number(item.totalTokens ?? 0), 0);
   const active = data.tasks.filter((task) =>
-    task.orchestrationStatus === "claimed" || task.orchestrationStatus === "stale_recovered").length;
-  const needsAction = data.tasks.filter((task) => task.orchestrationStatus === "needs_action").length;
+    taskLinearStateNormalized(task) === "in_progress").length;
+  const needsAction = data.tasks.filter((task) =>
+    taskLinearStateNormalized(task) === "needs_my_action").length;
   byId("metric-calls").textContent = integer(modelCalls);
   byId("metric-tokens").textContent = integer(totalTokens);
   byId("metric-active").textContent = integer(active);

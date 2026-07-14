@@ -218,8 +218,9 @@ retryable response so Pub/Sub can forward it to the dead-letter topic. A
 completed delivery is still acknowledged as a duplicate before this check.
 
 Firestore task leases prevent a different delivery from processing the same
-issue while the lease is active. When the lease expires, the next delivery can
-reclaim the task even if Linear already shows **In Progress**. Recovery records
+issue while the lease is active. A Pub/Sub retry of the active delivery can
+resume the task even if Linear already shows **In Progress**. An unrelated
+status-change delivery never claims work or calls a model. Recovery records
 `recoveryCount`, `previousDeliveryId`, `recoveredAt`, the new delivery attempt,
 message ID, and subscription. The dashboard's task ledger shows both attempt
 and recovery counts.
@@ -259,3 +260,41 @@ For an eligible simple issue, the Linear usage comment should name
 `google-gemini/gemini-3.1-flash-lite (free)` and Vercel spend should remain
 unchanged. A Gemini `429` or temporary `5xx` is recorded as a failed attempt and
 receives exactly one GLM FlashX fallback.
+
+## 8. Synchronize current Linear states
+
+Every issue webhook fetches the canonical issue and writes its current Linear
+state before the worker checks whether it is eligible for execution. The task
+document keeps this state in `currentLinearState*` fields while retaining
+`orchestrationStatus` as the historical execution outcome. Each attempted
+transition is audited in `task_state_transitions` using a deterministic delivery
+key. Duplicate and out-of-order webhook deliveries cannot overwrite newer state.
+
+Only `Todo` starts a new claim. An `In Progress` delivery may resume execution
+only when its delivery ID matches the task's active delivery. All other state
+events are acknowledged without claims, comments, transitions, or model calls.
+
+After deploying this feature, repair existing task rows through the worker's
+private authenticated endpoint:
+
+```bash
+WORKER_URL="$(gcloud run services describe orchestrator-worker \
+  --project=glm-api-server \
+  --region=africa-south1 \
+  --format='value(status.url)')"
+
+curl --silent --show-error --fail-with-body \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "${WORKER_URL}/internal/reconcile/linear-states?limit=100" | jq
+```
+
+The endpoint accepts limits from 1 through 250, uses at most five concurrent
+Linear reads, creates an audit record per task, and never invokes a model.
+Refresh **Task execution** afterward. The table should show the current Linear
+state and the separate execution outcome.
+
+Rollback by routing Cloud Run traffic to the preceding worker and dashboard
+revisions. The added task fields and audit collection are additive and safe for
+older revisions to ignore. Do not delete `task_state_transitions`; it is the
+state-reconciliation audit history.

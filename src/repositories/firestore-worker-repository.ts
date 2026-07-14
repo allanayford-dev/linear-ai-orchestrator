@@ -11,9 +11,15 @@ import type {
   ClaimResult,
   FailedGenerationResult,
   GenerationContext,
+  LinearStateSync,
+  LinearStateSyncResult,
   WorkerRepository,
 } from "./worker-repository.js";
 import { decideLeaseClaim } from "../services/lease-policy.js";
+import {
+  linearStateType,
+  normalizeLinearState,
+} from "../services/linear-state-policy.js";
 
 function monthKey(now = new Date()): string {
   return now.toISOString().slice(0, 7);
@@ -41,6 +47,86 @@ export class FirestoreWorkerRepository implements WorkerRepository {
     private readonly defaultSystemBudgetMicros = 20_000_000,
     private readonly defaultPaidAiCircuitBreakerMicros = 18_000_000,
   ) {}
+
+  async syncLinearState(
+    issue: LinearIssue,
+    sync: LinearStateSync,
+  ): Promise<LinearStateSyncResult> {
+    const taskRef = this.firestore.collection("tasks").doc(issue.id);
+    const auditRef = this.firestore.collection("task_state_transitions")
+      .doc(documentPart(`${issue.id}:${sync.deliveryId}`));
+
+    return this.firestore.runTransaction(async (transaction) => {
+      const [task, audit] = await Promise.all([
+        transaction.get(taskRef),
+        transaction.get(auditRef),
+      ]);
+      const taskData = task.data() ?? {};
+      const resumeCurrentDelivery =
+        taskData.currentDeliveryId === sync.deliveryId;
+      if (audit.exists) {
+        return { outcome: "duplicate", resumeCurrentDelivery };
+      }
+
+      const stateType = linearStateType(issue);
+      const normalized = normalizeLinearState(issue.state.name);
+      const previousTimestamp = typeof taskData.linearStateEventTimestamp === "number"
+        ? taskData.linearStateEventTimestamp
+        : 0;
+      const stale = sync.source === "linear-webhook" &&
+        previousTimestamp > sync.eventTimestamp;
+      const unchanged =
+        taskData.currentLinearStateId === issue.state.id &&
+        taskData.currentLinearStateName === issue.state.name &&
+        taskData.currentLinearStateType === stateType;
+      const outcome = stale ? "stale" : unchanged ? "unchanged" : "updated";
+
+      if (!stale) {
+        transaction.set(taskRef, {
+          linearIssueId: issue.id,
+          issueIdentifier: issue.identifier,
+          title: issue.title,
+          projectId: issue.project?.id ?? "unassigned",
+          projectName: issue.project?.name ?? "Unassigned",
+          currentLinearStateId: issue.state.id,
+          currentLinearStateName: issue.state.name,
+          currentLinearStateType: stateType,
+          currentLinearStateNormalized: normalized,
+          linearStateEventTimestamp: sync.eventTimestamp,
+          linearStateDeliveryId: sync.deliveryId,
+          linearStateSyncSource: sync.source,
+          linearStateUpdatedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      transaction.create(auditRef, {
+        taskId: issue.id,
+        issueIdentifier: issue.identifier,
+        deliveryId: sync.deliveryId,
+        source: sync.source,
+        eventTimestamp: sync.eventTimestamp,
+        outcome,
+        previousStateId: taskData.currentLinearStateId ?? null,
+        previousStateName: taskData.currentLinearStateName ?? null,
+        previousStateType: taskData.currentLinearStateType ?? null,
+        currentStateId: issue.state.id,
+        currentStateName: issue.state.name,
+        currentStateType: stateType,
+        currentStateNormalized: normalized,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      return { outcome, resumeCurrentDelivery };
+    });
+  }
+
+  async listTaskIds(limit: number): Promise<string[]> {
+    const snapshot = await this.firestore.collection("tasks")
+      .orderBy("updatedAt", "desc")
+      .limit(limit)
+      .get();
+    return snapshot.docs.map((document) => document.id);
+  }
 
   private async recordGenerationUsage(
     context: GenerationContext,

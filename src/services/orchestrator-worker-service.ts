@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { WorkerConfig } from "../config/worker-env.js";
 import type {
   GenerationContext,
@@ -22,10 +22,20 @@ import {
   ProviderRequestError,
   RetryableProviderError,
 } from "./provider-errors.js";
+import { normalizeLinearState } from "./linear-state-policy.js";
 
 export interface WorkerOutcome {
-  outcome: "ignored" | "duplicate" | "busy" | "needs_action" | "in_review";
+  outcome: "ignored" | "state_synced" | "duplicate" | "busy" | "needs_action" | "in_review";
   reason?: string;
+}
+
+export interface LinearStateReconciliationResult {
+  attemptId: string;
+  requested: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+  failures: Array<{ taskId: string; error: string }>;
 }
 
 interface AttemptSpec {
@@ -246,13 +256,73 @@ export class OrchestratorWorkerService {
         ...(usage ? ["", usage] : []),
       ].join("\n"),
     );
-    await this.linear.moveIssue(issue, this.config.states.needsAction);
+    await this.moveIssueAndSync(
+      issue,
+      this.config.states.needsAction,
+      deliveryId,
+    );
     await this.repository.completeTask(issue.id, deliveryId, "needs_action", {
       handoffReason: reason,
       requestedAction: action,
       linearState: this.config.states.needsAction,
     });
     return { outcome: "needs_action", reason };
+  }
+
+  private async moveIssueAndSync(
+    issue: LinearIssue,
+    stateName: string,
+    deliveryId: string,
+  ): Promise<void> {
+    await this.linear.moveIssue(issue, stateName);
+    await this.repository.syncLinearState(issue, {
+      deliveryId: `${deliveryId}:worker:${normalizeLinearState(stateName)}`,
+      eventTimestamp: Date.now(),
+      source: "worker-transition",
+    });
+  }
+
+  async reconcileLinearStates(limit = 100): Promise<LinearStateReconciliationResult> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 250) {
+      throw new Error("limit must be an integer from 1 to 250");
+    }
+    const attemptId = randomUUID();
+    const taskIds = await this.repository.listTaskIds(limit);
+    const result: LinearStateReconciliationResult = {
+      attemptId,
+      requested: taskIds.length,
+      updated: 0,
+      unchanged: 0,
+      failed: 0,
+      failures: [],
+    };
+    let cursor = 0;
+    const reconcileNext = async (): Promise<void> => {
+      while (cursor < taskIds.length) {
+        const taskId = taskIds[cursor++];
+        if (!taskId) continue;
+        try {
+          const issue = await this.linear.getIssue(taskId);
+          const sync = await this.repository.syncLinearState(issue, {
+            deliveryId: `backfill:${attemptId}:${taskId}`,
+            eventTimestamp: Date.now(),
+            source: "backfill",
+          });
+          if (sync.outcome === "updated") result.updated += 1;
+          else result.unchanged += 1;
+        } catch (error) {
+          result.failed += 1;
+          result.failures.push({
+            taskId,
+            error: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+          });
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(5, taskIds.length) }, () => reconcileNext()),
+    );
+    return result;
   }
 
   async handle(event: WorkEvent): Promise<WorkerOutcome> {
@@ -265,12 +335,20 @@ export class OrchestratorWorkerService {
     }
 
     const issue = await this.linear.getIssue(issueId);
+    const stateSync = await this.repository.syncLinearState(issue, {
+      deliveryId: event.deliveryId,
+      eventTimestamp: event.payload.webhookTimestamp,
+      source: "linear-webhook",
+    });
     const currentState = issue.state.name.toLowerCase();
     const isTodo = currentState === this.config.states.todo.toLowerCase();
     const isInProgress =
       currentState === this.config.states.inProgress.toLowerCase();
-    if (!isTodo && !isInProgress) {
-      return { outcome: "ignored", reason: `Current state is ${issue.state.name}` };
+    if (!isTodo && !(isInProgress && stateSync.resumeCurrentDelivery)) {
+      return {
+        outcome: "state_synced",
+        reason: `Current state is ${issue.state.name}`,
+      };
     }
 
     const claim = await this.repository.claim(
@@ -298,7 +376,11 @@ export class OrchestratorWorkerService {
 
     try {
       if (isTodo) {
-        await this.linear.moveIssue(issue, this.config.states.inProgress);
+        await this.moveIssueAndSync(
+          issue,
+          this.config.states.inProgress,
+          event.deliveryId,
+        );
       }
       const calls: ModelCall[] = [];
       const paidRouter: AttemptSpec = {
@@ -383,7 +465,11 @@ export class OrchestratorWorkerService {
         "",
         "This is a candidate result awaiting human review; the worker has not marked the issue Done.",
       ].join("\n"));
-      await this.linear.moveIssue(issue, this.config.states.review);
+      await this.moveIssueAndSync(
+        issue,
+        this.config.states.review,
+        event.deliveryId,
+      );
       await this.repository.completeTask(issue.id, event.deliveryId, "in_review", {
         linearState: this.config.states.review,
         routeComplexity: routed.result.value.complexity,
