@@ -94,11 +94,12 @@ async function api(path: string, options: RequestInit = {}) {
 function taskTable(tasks: RecordValue[], limit?: number) {
   const rows = typeof limit === "number" ? tasks.slice(0, limit) : tasks;
   if (!rows.length) return '<div class="empty">No task executions recorded yet.</div>';
-  return `<table><thead><tr><th>Issue</th><th>Task</th><th>Status</th><th>Updated</th></tr></thead><tbody>${rows.map((task) => `
+  return `<table><thead><tr><th>Issue</th><th>Task</th><th>Status</th><th>Delivery</th><th>Updated</th></tr></thead><tbody>${rows.map((task) => `
     <tr>
       <td>${html(task.issueIdentifier)}</td>
       <td>${html(task.title)}</td>
       <td><span class="chip ${statusClass(task.orchestrationStatus)}">${html(task.orchestrationStatus)}</span></td>
+      <td>attempt ${integer(task.deliveryAttempt || 1)}${Number(task.recoveryCount ?? 0) > 0 ? ` · recovered ${integer(task.recoveryCount)}` : ""}</td>
       <td>${html(timestamp(task.updatedAt))}</td>
     </tr>`).join("")}</tbody></table>`;
 }
@@ -157,7 +158,8 @@ function render(data: DashboardData) {
 
   const modelCalls = data.models.reduce((sum, item) => sum + Number(item.modelCalls ?? 0), 0);
   const totalTokens = data.models.reduce((sum, item) => sum + Number(item.totalTokens ?? 0), 0);
-  const active = data.tasks.filter((task) => task.orchestrationStatus === "claimed").length;
+  const active = data.tasks.filter((task) =>
+    task.orchestrationStatus === "claimed" || task.orchestrationStatus === "stale_recovered").length;
   const needsAction = data.tasks.filter((task) => task.orchestrationStatus === "needs_action").length;
   byId("metric-calls").textContent = integer(modelCalls);
   byId("metric-tokens").textContent = integer(totalTokens);

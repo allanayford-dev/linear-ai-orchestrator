@@ -82,7 +82,7 @@ gcloud run deploy orchestrator-worker \
   --timeout=600 \
   --command=node \
   --args=dist/worker-server.js \
-  --set-env-vars="GCP_PROJECT_ID=$PROJECT,FIRESTORE_DATABASE_ID=(default),GEMINI_MODEL=gemini-3.1-flash-lite,GEMINI_ALLOWED_PROJECTS=YOUR_LINEAR_PROJECT_NAME_OR_ID,GEMINI_SENSITIVE_LABELS=ai-sensitive,ROUTER_MODEL=zai/glm-4.7-flashx,EXECUTOR_MODEL=zai/glm-5.2,LINEAR_TODO_STATE=Todo,LINEAR_IN_PROGRESS_STATE=In Progress,LINEAR_NEEDS_ACTION_STATE=Needs My Action,LINEAR_REVIEW_STATE=In Review,TASK_LEASE_SECONDS=900,MAX_TASK_COST_MICROS=250000,MAX_TASK_TOKENS=50000,MAX_PROJECT_MONTHLY_COST_MICROS=5000000" \
+  --set-env-vars="GCP_PROJECT_ID=$PROJECT,FIRESTORE_DATABASE_ID=(default),GEMINI_MODEL=gemini-3.1-flash-lite,GEMINI_ALLOWED_PROJECTS=YOUR_LINEAR_PROJECT_NAME_OR_ID,GEMINI_SENSITIVE_LABELS=ai-sensitive,ROUTER_MODEL=zai/glm-4.7-flashx,EXECUTOR_MODEL=zai/glm-5.2,LINEAR_TODO_STATE=Todo,LINEAR_IN_PROGRESS_STATE=In Progress,LINEAR_NEEDS_ACTION_STATE=Needs My Action,LINEAR_REVIEW_STATE=In Review,TASK_LEASE_SECONDS=900,MAX_DELIVERY_ATTEMPTS=5,MAX_TASK_COST_MICROS=250000,MAX_TASK_TOKENS=50000,MAX_PROJECT_MONTHLY_COST_MICROS=5000000" \
   --set-secrets="LINEAR_API_KEY=linear-api-key:latest,AI_GATEWAY_API_KEY=ai-gateway-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest"
 ```
 
@@ -209,6 +209,39 @@ the dead-letter subscription itself cannot loop forever.
 
 Do not automatically replay dead letters. Diagnose and fix the underlying
 problem, then republish only the original work event that is safe to retry.
+
+### Lease recovery and application delivery limit
+
+The worker also enforces `MAX_DELIVERY_ATTEMPTS=5` before any model call. A
+delivery at the limit is recorded as `delivery_limit_reached` and returns a
+retryable response so Pub/Sub can forward it to the dead-letter topic. A
+completed delivery is still acknowledged as a duplicate before this check.
+
+Firestore task leases prevent a different delivery from processing the same
+issue while the lease is active. When the lease expires, the next delivery can
+reclaim the task even if Linear already shows **In Progress**. Recovery records
+`recoveryCount`, `previousDeliveryId`, `recoveredAt`, the new delivery attempt,
+message ID, and subscription. The dashboard's task ledger shows both attempt
+and recovery counts.
+
+To inspect recovered or delivery-limited tasks:
+
+```bash
+ACCESS_TOKEN="$(gcloud auth print-access-token)"
+
+curl --silent --show-error \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://firestore.googleapis.com/v1/projects/$PROJECT/databases/%28default%29/documents/tasks?pageSize=100" | \
+jq '[.documents[]? | {
+  issue: (.fields.issueIdentifier.stringValue // ""),
+  status: (.fields.orchestrationStatus.stringValue // ""),
+  deliveryAttempt: ((.fields.deliveryAttempt.integerValue // "0") | tonumber),
+  recoveryCount: ((.fields.recoveryCount.integerValue // "0") | tonumber),
+  previousDeliveryId: (.fields.previousDeliveryId.stringValue // "")
+}] | map(select(.recoveryCount > 0 or .status == "delivery_limit_reached"))'
+
+unset ACCESS_TOKEN
+```
 
 ## 7. Pilot safely
 

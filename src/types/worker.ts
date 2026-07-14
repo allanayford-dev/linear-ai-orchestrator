@@ -8,6 +8,7 @@ export interface PubSubPushEnvelope {
     publishTime?: string;
   };
   subscription?: string;
+  deliveryAttempt?: number;
 }
 
 export interface WorkEvent {
@@ -15,6 +16,9 @@ export interface WorkEvent {
   source: string;
   receivedAt: string;
   payload: LinearWebhookPayload;
+  deliveryAttempt: number;
+  pubsubMessageId: string;
+  subscription: string | null;
 }
 
 export interface LinearIssue {
@@ -90,5 +94,13 @@ export function decodeWorkEvent(envelope: PubSubPushEnvelope): WorkEvent {
   ) {
     throw new Error("Invalid work event");
   }
-  return parsed as WorkEvent;
+  return {
+    ...(parsed as WorkEvent),
+    deliveryAttempt: Number.isSafeInteger(envelope.deliveryAttempt) &&
+        (envelope.deliveryAttempt ?? 0) > 0
+      ? envelope.deliveryAttempt as number
+      : 1,
+    pubsubMessageId: envelope.message.messageId,
+    subscription: envelope.subscription ?? null,
+  };
 }

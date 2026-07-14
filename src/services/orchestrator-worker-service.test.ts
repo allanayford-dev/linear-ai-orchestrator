@@ -30,6 +30,7 @@ const config: WorkerConfig = {
   executorModel: "zai/glm-5.2",
   states: { todo: "Todo", inProgress: "In Progress", needsAction: "Needs My Action", review: "In Review" },
   leaseSeconds: 900,
+  maxDeliveryAttempts: 5,
   maxTaskCostMicros: 250_000,
   maxTaskTokens: 50_000,
   maxProjectMonthlyCostMicros: 5_000_000,
@@ -63,6 +64,9 @@ const event: WorkEvent = {
   deliveryId: "delivery-1",
   source: "linear",
   receivedAt: "2026-07-13T12:00:00.000Z",
+  deliveryAttempt: 1,
+  pubsubMessageId: "message-1",
+  subscription: "projects/project/subscriptions/orchestrator-worker",
   payload: {
     action: "create",
     type: "Issue",
@@ -91,7 +95,7 @@ function harness(
   currentIssue: LinearIssue,
   route: RouteDecision,
   execution?: ExecutionResult,
-  claimResult: "claimed" | "duplicate" | "busy" = "claimed",
+  claimResult: "claimed" | "recovered" | "duplicate" | "busy" | "delivery_limit" = "claimed",
 ) {
   const transitions: string[] = [];
   const comments: string[] = [];
@@ -216,7 +220,13 @@ describe("OrchestratorWorkerService", () => {
     await expect(h.service.handle(event)).resolves.toEqual({
       outcome: "busy",
     });
-    expect(h.repository.claim).toHaveBeenCalledWith(expect.anything(), "delivery-1", 900, false);
+    expect(h.repository.claim).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ deliveryId: "delivery-1", deliveryAttempt: 1 }),
+      900,
+      5,
+      false,
+    );
     expect(h.gemini.route).not.toHaveBeenCalled();
   });
 
@@ -338,6 +348,39 @@ describe("OrchestratorWorkerService", () => {
 
     await expect(h.service.handle(event)).resolves.toEqual({ outcome: "in_review" });
     expect(h.transitions).toEqual(["In Review"]);
-    expect(h.repository.claim).toHaveBeenCalledWith(expect.anything(), "delivery-1", 900, false);
+    expect(h.repository.claim).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ deliveryId: "delivery-1", deliveryAttempt: 1 }),
+      900,
+      5,
+      false,
+    );
+  });
+
+  it("continues processing after a stale lease is recovered", async () => {
+    const h = harness(
+      issue("In Progress"),
+      { complexity: "simple", outcome: "execute", reason: "Recovered lease" },
+      { outcome: "ready_for_review", summary: "Recovered", result: "Result", verification: [] },
+      "recovered",
+    );
+
+    await expect(h.service.handle(event)).resolves.toEqual({ outcome: "in_review" });
+    expect(h.transitions).toEqual(["In Review"]);
+    expect(h.gemini.route).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws before model calls when the delivery limit is reached", async () => {
+    const h = harness(
+      issue("In Progress"),
+      { complexity: "simple", outcome: "execute", reason: "Must not run" },
+      undefined,
+      "delivery_limit",
+    );
+
+    await expect(h.service.handle({ ...event, deliveryAttempt: 5 }))
+      .rejects.toMatchObject({ name: "DeliveryLimitExceededError" });
+    expect(h.gemini.route).not.toHaveBeenCalled();
+    expect(h.paidAi.route).not.toHaveBeenCalled();
   });
 });
