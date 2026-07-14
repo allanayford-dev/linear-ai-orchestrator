@@ -135,4 +135,39 @@ describe("worker app", () => {
     expect(costs.reconcile).toHaveBeenCalledWith("2026-07");
   });
 
+  it("runs an internal Linear state backfill without a Pub/Sub delivery", async () => {
+    const worker = {
+      handle: vi.fn(),
+      reconcileLinearStates: vi.fn().mockResolvedValue({
+        attemptId: "sync-1",
+        requested: 4,
+        updated: 3,
+        unchanged: 1,
+        failed: 0,
+        failures: [],
+      }),
+    } as unknown as OrchestratorWorkerService;
+
+    const response = await request(createWorkerApp(worker, deadLetters(), gcpCosts()))
+      .post("/internal/reconcile/linear-states?limit=4")
+      .expect(200);
+
+    expect(response.body).toMatchObject({ requested: 4, updated: 3 });
+    expect(worker.reconcileLinearStates).toHaveBeenCalledWith(4);
+    expect(worker.handle).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid Linear state backfill limit", async () => {
+    const worker = {
+      handle: vi.fn(),
+      reconcileLinearStates: vi.fn().mockRejectedValue(
+        new Error("limit must be an integer from 1 to 250"),
+      ),
+    } as unknown as OrchestratorWorkerService;
+
+    await request(createWorkerApp(worker, deadLetters(), gcpCosts()))
+      .post("/internal/reconcile/linear-states?limit=0")
+      .expect(400, { error: "limit must be an integer from 1 to 250" });
+  });
+
 });

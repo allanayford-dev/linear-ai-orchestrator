@@ -25,6 +25,8 @@ and cost through a Firebase-authenticated operations dashboard.
 - Sensitive-label protection that keeps `ai-sensitive` work away from Gemini
 - Human handoff to `Needs My Action`
 - Candidate results to `In Review` (never automatically `Done`)
+- Canonical Linear-state synchronization without model calls for status-only events
+- Separate current Linear state and historical execution outcome in the dashboard
 - Per-generation, task, project-month, and model-month usage records
 - Per-task token and spending gates plus a per-project spending gate
 - Firebase Google sign-in with an explicit dashboard email allowlist
@@ -46,6 +48,7 @@ reserves some such paths and can intercept them before they reach the container.
 | --- | --- |
 | `webhook_events` | Raw event audit, processing status, and Pub/Sub message ID |
 | `tasks` | Latest Linear issue snapshot and orchestration identifiers |
+| `task_state_transitions` | Idempotent audit of webhook, worker, and backfill state synchronization |
 | `task_usage` | Per-task token and cost totals, initially zero |
 | `generations` | Idempotent ledger entry for every model call and result |
 | `project_usage_monthly` | Monthly project token and estimated-cost totals |

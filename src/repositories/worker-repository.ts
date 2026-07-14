@@ -14,6 +14,17 @@ export type ClaimResult =
   | "delivery_limit";
 export type FailedGenerationResult = Omit<ModelResult<unknown>, "value">;
 
+export interface LinearStateSync {
+  deliveryId: string;
+  eventTimestamp: number;
+  source: "linear-webhook" | "worker-transition" | "backfill";
+}
+
+export interface LinearStateSyncResult {
+  outcome: "updated" | "unchanged" | "duplicate" | "stale";
+  resumeCurrentDelivery: boolean;
+}
+
 export interface GenerationContext {
   generationId: string;
   taskId: string;
@@ -29,6 +40,11 @@ export interface GenerationContext {
 }
 
 export interface WorkerRepository {
+  syncLinearState(
+    issue: LinearIssue,
+    sync: LinearStateSync,
+  ): Promise<LinearStateSyncResult>;
+  listTaskIds(limit: number): Promise<string[]>;
   claim(
     issue: LinearIssue,
     delivery: {

@@ -102,10 +102,16 @@ function harness(
   route: RouteDecision,
   execution?: ExecutionResult,
   claimResult: "claimed" | "recovered" | "duplicate" | "busy" | "delivery_limit" = "claimed",
+  resumeCurrentDelivery = currentIssue.state.name === "In Progress",
 ) {
   const transitions: string[] = [];
   const comments: string[] = [];
   const repository: WorkerRepository = {
+    syncLinearState: vi.fn().mockResolvedValue({
+      outcome: "updated",
+      resumeCurrentDelivery,
+    }),
+    listTaskIds: vi.fn().mockResolvedValue([]),
     claim: vi.fn().mockResolvedValue(claimResult),
     getCompletedGeneration: vi.fn().mockResolvedValue(null),
     startGeneration: vi.fn().mockResolvedValue(undefined),
@@ -148,6 +154,87 @@ function harness(
 }
 
 describe("OrchestratorWorkerService", () => {
+  it.each(["Done", "Canceled", "In Review", "Needs My Action", "Blocked"])(
+    "synchronizes %s without claiming work or calling a model",
+    async (state) => {
+      const h = harness(issue(state), {
+        complexity: "simple",
+        outcome: "execute",
+        reason: "Should not execute",
+      });
+
+      await expect(h.service.handle(event)).resolves.toEqual({
+        outcome: "state_synced",
+        reason: `Current state is ${state}`,
+      });
+      expect(h.repository.syncLinearState).toHaveBeenCalledWith(
+        expect.objectContaining({ state: expect.objectContaining({ name: state }) }),
+        expect.objectContaining({
+          deliveryId: "delivery-1",
+          source: "linear-webhook",
+        }),
+      );
+      expect(h.repository.claim).not.toHaveBeenCalled();
+      expect(h.gemini.route).not.toHaveBeenCalled();
+      expect(h.paidAi.route).not.toHaveBeenCalled();
+    },
+  );
+
+  it("acknowledges a duplicate status delivery without model calls", async () => {
+    const h = harness(issue("Done"), {
+      complexity: "simple",
+      outcome: "execute",
+      reason: "Should not execute",
+    });
+    vi.mocked(h.repository.syncLinearState).mockResolvedValue({
+      outcome: "duplicate",
+      resumeCurrentDelivery: false,
+    });
+
+    await expect(h.service.handle(event)).resolves.toMatchObject({
+      outcome: "state_synced",
+    });
+    expect(h.repository.claim).not.toHaveBeenCalled();
+    expect(h.gemini.route).not.toHaveBeenCalled();
+    expect(h.paidAi.route).not.toHaveBeenCalled();
+  });
+
+  it("does not resume an unrelated In Progress status delivery", async () => {
+    const h = harness(issue("In Progress"), {
+      complexity: "simple",
+      outcome: "execute",
+      reason: "Should not execute",
+    }, undefined, "claimed", false);
+
+    await expect(h.service.handle(event)).resolves.toMatchObject({
+      outcome: "state_synced",
+    });
+    expect(h.repository.claim).not.toHaveBeenCalled();
+    expect(h.gemini.route).not.toHaveBeenCalled();
+  });
+
+  it("backfills current states without invoking model clients", async () => {
+    const h = harness(issue("Done"), {
+      complexity: "simple",
+      outcome: "execute",
+      reason: "Should not execute",
+    });
+    vi.mocked(h.repository.listTaskIds).mockResolvedValue(["issue-1", "issue-2"]);
+    vi.mocked(h.repository.syncLinearState)
+      .mockResolvedValueOnce({ outcome: "updated", resumeCurrentDelivery: false })
+      .mockResolvedValueOnce({ outcome: "unchanged", resumeCurrentDelivery: false });
+
+    await expect(h.service.reconcileLinearStates(2)).resolves.toMatchObject({
+      requested: 2,
+      updated: 1,
+      unchanged: 1,
+      failed: 0,
+    });
+    expect(h.gemini.route).not.toHaveBeenCalled();
+    expect(h.paidAi.route).not.toHaveBeenCalled();
+    expect(h.repository.claim).not.toHaveBeenCalled();
+  });
+
   it("routes complex work to GLM-5.2 and leaves a candidate in review", async () => {
     const h = harness(
       issue(),

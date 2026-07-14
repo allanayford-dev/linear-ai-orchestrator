@@ -27,7 +27,7 @@ export interface LinearIssue {
   title: string;
   description: string | null;
   url: string;
-  state: { id: string; name: string };
+  state: { id: string; name: string; type?: string };
   team: {
     id: string;
     states: Array<{ id: string; name: string; type: string }>;
