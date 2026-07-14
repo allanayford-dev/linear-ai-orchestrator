@@ -6,7 +6,12 @@ import type {
   PricingTier,
 } from "../types/worker.js";
 
-export type ClaimResult = "claimed" | "duplicate" | "busy";
+export type ClaimResult =
+  | "claimed"
+  | "recovered"
+  | "duplicate"
+  | "busy"
+  | "delivery_limit";
 export type FailedGenerationResult = Omit<ModelResult<unknown>, "value">;
 
 export interface GenerationContext {
@@ -26,8 +31,14 @@ export interface GenerationContext {
 export interface WorkerRepository {
   claim(
     issue: LinearIssue,
-    deliveryId: string,
+    delivery: {
+      deliveryId: string;
+      deliveryAttempt: number;
+      pubsubMessageId: string;
+      subscription: string | null;
+    },
     leaseSeconds: number,
+    maxDeliveryAttempts: number,
     allowNewClaim: boolean,
   ): Promise<ClaimResult>;
   getCompletedGeneration<T>(generationId: string): Promise<ModelResult<T> | null>;

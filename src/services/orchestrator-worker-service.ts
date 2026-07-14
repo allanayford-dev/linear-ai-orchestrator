@@ -275,11 +275,26 @@ export class OrchestratorWorkerService {
 
     const claim = await this.repository.claim(
       issue,
-      event.deliveryId,
+      {
+        deliveryId: event.deliveryId,
+        deliveryAttempt: event.deliveryAttempt,
+        pubsubMessageId: event.pubsubMessageId,
+        subscription: event.subscription,
+      },
       this.config.leaseSeconds,
+      this.config.maxDeliveryAttempts,
       isTodo,
     );
-    if (claim !== "claimed") return { outcome: claim };
+    if (claim === "delivery_limit") {
+      const error = new Error(
+        `Delivery attempt ${event.deliveryAttempt} reached the configured limit ${this.config.maxDeliveryAttempts}`,
+      );
+      error.name = "DeliveryLimitExceededError";
+      throw error;
+    }
+    if (claim !== "claimed" && claim !== "recovered") {
+      return { outcome: claim };
+    }
 
     try {
       if (isTodo) {

@@ -17,6 +17,7 @@ export interface WorkerConfig {
     review: string;
   };
   leaseSeconds: number;
+  maxDeliveryAttempts: number;
   maxTaskCostMicros: number;
   maxTaskTokens: number;
   maxProjectMonthlyCostMicros: number;
@@ -48,6 +49,10 @@ function list(name: string, fallback: string[] = []): string[] {
 
 export function loadWorkerConfig(): WorkerConfig {
   const projectId = process.env.GCP_PROJECT_ID?.trim();
+  const maxDeliveryAttempts = integer("MAX_DELIVERY_ATTEMPTS", 5);
+  if (maxDeliveryAttempts < 1) {
+    throw new Error("MAX_DELIVERY_ATTEMPTS must be greater than zero");
+  }
   return {
     port: integer("PORT", 8080),
     ...(projectId ? { projectId } : {}),
@@ -69,6 +74,7 @@ export function loadWorkerConfig(): WorkerConfig {
       review: process.env.LINEAR_REVIEW_STATE?.trim() || "In Review",
     },
     leaseSeconds: integer("TASK_LEASE_SECONDS", 900),
+    maxDeliveryAttempts,
     maxTaskCostMicros: integer("MAX_TASK_COST_MICROS", 250_000),
     maxTaskTokens: integer("MAX_TASK_TOKENS", 50_000),
     maxProjectMonthlyCostMicros: integer(

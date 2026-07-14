@@ -13,6 +13,7 @@ import type {
   GenerationContext,
   WorkerRepository,
 } from "./worker-repository.js";
+import { decideLeaseClaim } from "../services/lease-policy.js";
 
 function monthKey(now = new Date()): string {
   return now.toISOString().slice(0, 7);
@@ -188,20 +189,56 @@ export class FirestoreWorkerRepository implements WorkerRepository {
 
   async claim(
     issue: LinearIssue,
-    deliveryId: string,
+    delivery: {
+      deliveryId: string;
+      deliveryAttempt: number;
+      pubsubMessageId: string;
+      subscription: string | null;
+    },
     leaseSeconds: number,
+    maxDeliveryAttempts: number,
     allowNewClaim: boolean,
   ): Promise<ClaimResult> {
     const ref = this.firestore.collection("tasks").doc(issue.id);
     return this.firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(ref);
       const data = snapshot.data();
-      if (data?.completedDeliveryId === deliveryId) return "duplicate";
-      const resumingDelivery = data?.currentDeliveryId === deliveryId;
-      if (!allowNewClaim && !resumingDelivery) return "busy";
       const leaseUntil = data?.leaseUntil as Timestamp | undefined;
-      if (leaseUntil && leaseUntil.toMillis() > Date.now() && !resumingDelivery) {
-        return "busy";
+      const decision = decideLeaseClaim({
+        ...(typeof data?.completedDeliveryId === "string"
+          ? { completedDeliveryId: data.completedDeliveryId }
+          : {}),
+        ...(typeof data?.currentDeliveryId === "string"
+          ? { currentDeliveryId: data.currentDeliveryId }
+          : {}),
+        ...(leaseUntil ? { leaseUntilMs: leaseUntil.toMillis() } : {}),
+        ...(typeof data?.orchestrationStatus === "string"
+          ? { orchestrationStatus: data.orchestrationStatus }
+          : {}),
+      }, {
+        deliveryId: delivery.deliveryId,
+        deliveryAttempt: delivery.deliveryAttempt,
+        maxDeliveryAttempts,
+        allowNewClaim,
+        nowMs: Date.now(),
+      });
+      if (decision === "duplicate" || decision === "busy") return decision;
+      if (decision === "delivery_limit") {
+        transaction.set(ref, {
+          linearIssueId: issue.id,
+          issueIdentifier: issue.identifier,
+          title: issue.title,
+          orchestrationStatus: "delivery_limit_reached",
+          currentDeliveryId: delivery.deliveryId,
+          deliveryAttempt: delivery.deliveryAttempt,
+          pubsubMessageId: delivery.pubsubMessageId,
+          deliverySubscription: delivery.subscription,
+          configuredDeliveryLimit: maxDeliveryAttempts,
+          leaseUntil: FieldValue.delete(),
+          deliveryLimitReachedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        return decision;
       }
       transaction.set(ref, {
         linearIssueId: issue.id,
@@ -209,13 +246,21 @@ export class FirestoreWorkerRepository implements WorkerRepository {
         title: issue.title,
         projectId: issue.project?.id ?? "unassigned",
         projectName: issue.project?.name ?? "Unassigned",
-        orchestrationStatus: "claimed",
-        currentDeliveryId: deliveryId,
+        orchestrationStatus: decision === "recovered" ? "stale_recovered" : "claimed",
+        currentDeliveryId: delivery.deliveryId,
+        deliveryAttempt: delivery.deliveryAttempt,
+        pubsubMessageId: delivery.pubsubMessageId,
+        deliverySubscription: delivery.subscription,
         leaseUntil: Timestamp.fromMillis(Date.now() + leaseSeconds * 1000),
         claimedAt: FieldValue.serverTimestamp(),
+        ...(decision === "recovered" ? {
+          recoveryCount: FieldValue.increment(1),
+          previousDeliveryId: data?.currentDeliveryId ?? null,
+          recoveredAt: FieldValue.serverTimestamp(),
+        } : {}),
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
-      return "claimed";
+      return decision;
     });
   }
 
