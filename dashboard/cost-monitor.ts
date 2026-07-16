@@ -1,4 +1,4 @@
-import { getApp, getApps, initializeApp } from "firebase/app";
+import { getApp, getApps } from "firebase/app";
 import { getAuth, onAuthStateChanged, type User } from "firebase/auth";
 
 type RecordValue = Record<string, unknown>;
@@ -139,9 +139,15 @@ async function loadCostMonitor(user: User): Promise<void> {
   byId("fallback-count").textContent = `${fallbacks.length} recent records`;
 }
 
-const configResponse = await fetch("/api/config");
-const { firebase } = await configResponse.json();
-const app = getApps().length ? getApp() : initializeApp(firebase);
+async function waitForDashboardFirebaseApp() {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (getApps().length > 0) return getApp();
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
+  }
+  throw new Error("Dashboard Firebase app did not initialize");
+}
+
+const app = await waitForDashboardFirebaseApp();
 const auth = getAuth(app);
 
 onAuthStateChanged(auth, async (user) => {
