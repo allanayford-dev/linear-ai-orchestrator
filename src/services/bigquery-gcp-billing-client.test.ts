@@ -36,6 +36,19 @@ describe("BigQueryGcpBillingClient", () => {
     expect(runner.query.mock.calls[0][0].query).toContain("_PARTITIONTIME >=");
   });
 
+  it("fails closed when Google Cloud billing is not in canonical USD", async () => {
+    const runner = {
+      query: vi.fn().mockResolvedValue([[
+        { costMicros: "12500", currency: "ZAR", rowCount: { value: "7" } },
+      ]]),
+    };
+    const client = new BigQueryGcpBillingClient(runner as BigQueryRunner, config);
+
+    await expect(client.getMonth("2026-07")).rejects.toThrow(
+      "billing currency ZAR must be normalized to USD before aggregation",
+    );
+  });
+
   it("rejects malformed table configuration before querying", async () => {
     const runner = { query: vi.fn() };
     const client = new BigQueryGcpBillingClient(runner as BigQueryRunner, {
