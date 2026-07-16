@@ -19,4 +19,14 @@ await Promise.all([
     minify: process.env.NODE_ENV === "production",
     sourcemap: true,
   }),
+  build({
+    entryPoints: [join("dashboard", "cost-monitor.ts")],
+    outfile: join(outputDirectory, "cost-monitor.js"),
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2022",
+    minify: process.env.NODE_ENV === "production",
+    sourcemap: true,
+  }),
 ]);
