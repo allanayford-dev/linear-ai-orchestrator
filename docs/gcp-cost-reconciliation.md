@@ -125,6 +125,16 @@ Successful runs create immutable records in `cost_reconciliations` and update:
 
 Refresh **Costs & models**. Google Cloud should show `fresh`, the BigQuery source, and the last reconciliation time. Manual dashboard changes are also audited and are labelled `manual`.
 
+## Canonical currency requirement
+
+The Orchestrator budget currency is USD and all budget calculations use integer USD micro-dollars. Google Cloud billing values must therefore be normalized to USD before they can be aggregated with AI or other platform costs.
+
+The current automated Google Cloud reconciliation accepts only a billing export whose reported currency is `USD`. If the export reports another currency, reconciliation fails closed, records the failure, and preserves the last valid monthly cost instead of treating the foreign-currency amount as USD.
+
+An approved future FX-normalization implementation must preserve the original source amount and currency together with the USD amount, conversion rate, conversion timestamp, and conversion source for audit.
+
+See `docs/cost-reconciliation-policy.md` for source precedence, refresh intervals, currency handling, and reconciliation tolerance.
+
 ## Rollback
 
 Pause the schedule without deleting its history:

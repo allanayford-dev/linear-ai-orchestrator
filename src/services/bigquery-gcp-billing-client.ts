@@ -19,6 +19,8 @@ export interface BigQueryBillingConfig {
   maximumBytesBilled: number;
 }
 
+const CANONICAL_BUDGET_CURRENCY = "USD";
+
 function scalar(value: unknown): number {
   if (typeof value === "number") return value;
   if (typeof value === "string") return Number(value);
@@ -67,7 +69,8 @@ export class BigQueryGcpBillingClient implements GcpBillingClient {
               SELECT SUM(CAST(credit.amount * 1000000 AS INT64))
               FROM UNNEST(credits) AS credit
             ), 0)), 0) AS costMicros,
-          COALESCE(ANY_VALUE(currency), 'USD') AS currency,
+          ANY_VALUE(currency) AS currency,
+          COUNT(DISTINCT currency) AS currencyCount,
           COUNT(*) AS rowCount
         FROM \`${this.config.table}\`
         WHERE project.id = @projectId
@@ -83,12 +86,36 @@ export class BigQueryGcpBillingClient implements GcpBillingClient {
     const row = rows[0] ?? {};
     const costMicros = scalar(row.costMicros);
     const rowCount = scalar(row.rowCount);
-    if (!Number.isSafeInteger(costMicros) || !Number.isSafeInteger(rowCount)) {
+    const currencyCount = scalar(row.currencyCount);
+    if (
+      !Number.isSafeInteger(costMicros) ||
+      !Number.isSafeInteger(rowCount) ||
+      !Number.isSafeInteger(currencyCount)
+    ) {
       throw new Error("BigQuery returned invalid aggregate values");
     }
+
+    if (rowCount > 0 && currencyCount !== 1) {
+      throw new Error("Google Cloud billing returned an unknown or mixed currency set");
+    }
+
+    const currency = rowCount === 0
+      ? CANONICAL_BUDGET_CURRENCY
+      : typeof row.currency === "string" && row.currency.trim()
+        ? row.currency.trim().toUpperCase()
+        : "";
+    if (!currency) {
+      throw new Error("Google Cloud billing currency is required before aggregation");
+    }
+    if (currency !== CANONICAL_BUDGET_CURRENCY) {
+      throw new Error(
+        `Google Cloud billing currency ${currency} must be normalized to ${CANONICAL_BUDGET_CURRENCY} before aggregation`,
+      );
+    }
+
     return {
       costMicros: Math.max(0, costMicros),
-      currency: typeof row.currency === "string" ? row.currency : "USD",
+      currency,
       rowCount,
       table: this.config.table,
       projectId: this.config.projectId,

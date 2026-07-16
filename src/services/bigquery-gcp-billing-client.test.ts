@@ -15,7 +15,12 @@ describe("BigQueryGcpBillingClient", () => {
   it("runs a bounded, parameterized monthly project query", async () => {
     const runner = {
       query: vi.fn().mockResolvedValue([[
-        { costMicros: "12500", currency: "USD", rowCount: { value: "7" } },
+        {
+          costMicros: "12500",
+          currency: "USD",
+          currencyCount: { value: "1" },
+          rowCount: { value: "7" },
+        },
       ]]),
     };
     const client = new BigQueryGcpBillingClient(runner as BigQueryRunner, config);
@@ -34,6 +39,63 @@ describe("BigQueryGcpBillingClient", () => {
       useLegacySql: false,
     }));
     expect(runner.query.mock.calls[0][0].query).toContain("_PARTITIONTIME >=");
+    expect(runner.query.mock.calls[0][0].query).toContain("COUNT(DISTINCT currency)");
+  });
+
+  it("fails closed when Google Cloud billing is not in canonical USD", async () => {
+    const runner = {
+      query: vi.fn().mockResolvedValue([[
+        {
+          costMicros: "12500",
+          currency: "ZAR",
+          currencyCount: { value: "1" },
+          rowCount: { value: "7" },
+        },
+      ]]),
+    };
+    const client = new BigQueryGcpBillingClient(runner as BigQueryRunner, config);
+
+    await expect(client.getMonth("2026-07")).rejects.toThrow(
+      "billing currency ZAR must be normalized to USD before aggregation",
+    );
+  });
+
+  it("fails closed when Google Cloud billing contains mixed currencies", async () => {
+    const runner = {
+      query: vi.fn().mockResolvedValue([[
+        {
+          costMicros: "12500",
+          currency: "USD",
+          currencyCount: { value: "2" },
+          rowCount: { value: "7" },
+        },
+      ]]),
+    };
+    const client = new BigQueryGcpBillingClient(runner as BigQueryRunner, config);
+
+    await expect(client.getMonth("2026-07")).rejects.toThrow(
+      "unknown or mixed currency set",
+    );
+  });
+
+  it("treats an empty billing month as zero canonical USD cost", async () => {
+    const runner = {
+      query: vi.fn().mockResolvedValue([[
+        {
+          costMicros: "0",
+          currency: null,
+          currencyCount: { value: "0" },
+          rowCount: { value: "0" },
+        },
+      ]]),
+    };
+    const client = new BigQueryGcpBillingClient(runner as BigQueryRunner, config);
+
+    await expect(client.getMonth("2026-07")).resolves.toMatchObject({
+      costMicros: 0,
+      currency: "USD",
+      rowCount: 0,
+    });
   });
 
   it("rejects malformed table configuration before querying", async () => {
