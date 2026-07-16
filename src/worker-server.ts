@@ -3,6 +3,7 @@ import { BigQuery } from "@google-cloud/bigquery";
 import { createWorkerApp } from "./worker-app.js";
 import { loadWorkerConfig } from "./config/worker-env.js";
 import { FirestoreWorkerRepository } from "./repositories/firestore-worker-repository.js";
+import { PauseAwareWorkerRepository } from "./repositories/pause-aware-worker-repository.js";
 import { FirestoreDeadLetterRepository } from "./repositories/firestore-dead-letter-repository.js";
 import { VercelAiGatewayClient } from "./services/ai-gateway-client.js";
 import { GeminiClient } from "./services/gemini-client.js";
@@ -19,11 +20,12 @@ const firestoreOptions = {
   ...(config.projectId ? { projectId: config.projectId } : {}),
 };
 const firestore = new Firestore(firestoreOptions);
-const repository = new FirestoreWorkerRepository(
+const firestoreRepository = new FirestoreWorkerRepository(
   firestore,
   config.maxSystemMonthlyCostMicros,
   config.paidAiCircuitBreakerMicros,
 );
+const repository = new PauseAwareWorkerRepository(firestore, firestoreRepository);
 const worker = new OrchestratorWorkerService(
   config,
   repository,
