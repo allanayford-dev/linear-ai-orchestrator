@@ -29,6 +29,42 @@ function pauseFirestore(paused: boolean) {
   return firestore;
 }
 
+function auditHarness(previous: { paused: boolean; paidAiPaused: boolean }) {
+  const auditSet = vi.fn().mockResolvedValue(undefined);
+  const before = {
+    get: vi.fn((field: string) => ({
+      paused: previous.paused,
+      paidAiPaused: previous.paidAiPaused,
+      budgetMicros: 20_000_000,
+      paidAiCircuitBreakerMicros: 18_000_000,
+      thresholds: [50, 75, 90, 100],
+    } as Record<string, unknown>)[field]),
+  };
+  const controlRef = { get: vi.fn().mockResolvedValue(before) };
+  const auditRef = { set: auditSet };
+  const firestore = {
+    collection: vi.fn((name: string) => ({
+      doc: vi.fn().mockReturnValue(
+        name === "orchestrator_control" ? controlRef : auditRef,
+      ),
+    })),
+  } as unknown as Firestore;
+  const inner = {
+    updateBudget: vi.fn().mockResolvedValue(undefined),
+  } as unknown as DashboardRepository;
+
+  return {
+    auditSet,
+    repository: new AuditedDashboardRepository(firestore, inner),
+  };
+}
+
+const baseBudgetUpdate = {
+  budgetMicros: 20_000_000,
+  paidAiCircuitBreakerMicros: 18_000_000,
+  thresholds: [50, 75, 90, 100],
+};
+
 describe("PauseAwareWorkerRepository", () => {
   it("blocks a new claim while preserving the outer webhook/state-sync path", async () => {
     const inner = {
@@ -77,34 +113,13 @@ describe("PauseAwareWorkerRepository", () => {
 
 describe("AuditedDashboardRepository", () => {
   it("records a manual pause action and completion evidence", async () => {
-    const auditSet = vi.fn().mockResolvedValue(undefined);
-    const before = {
-      get: vi.fn((field: string) => ({
-        paused: false,
-        paidAiPaused: false,
-        budgetMicros: 20_000_000,
-        paidAiCircuitBreakerMicros: 18_000_000,
-        thresholds: [50, 75, 90, 100],
-      } as Record<string, unknown>)[field]),
-    };
-    const controlRef = { get: vi.fn().mockResolvedValue(before) };
-    const auditRef = { set: auditSet };
-    const firestore = {
-      collection: vi.fn((name: string) => ({
-        doc: vi.fn().mockReturnValue(
-          name === "orchestrator_control" ? controlRef : auditRef,
-        ),
-      })),
-    } as unknown as Firestore;
-    const inner = {
-      updateBudget: vi.fn().mockResolvedValue(undefined),
-    } as unknown as DashboardRepository;
-    const repository = new AuditedDashboardRepository(firestore, inner);
+    const { auditSet, repository } = auditHarness({
+      paused: false,
+      paidAiPaused: false,
+    });
 
     await repository.updateBudget({
-      budgetMicros: 20_000_000,
-      paidAiCircuitBreakerMicros: 18_000_000,
-      thresholds: [50, 75, 90, 100],
+      ...baseBudgetUpdate,
       paused: true,
       pauseReason: "Manual safety pause",
     }, "allan@allanayford.me");
@@ -115,6 +130,28 @@ describe("AuditedDashboardRepository", () => {
       status: "pending",
       previousPaused: false,
       requestedPaused: true,
+    }));
+    expect(auditSet).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      status: "complete",
+    }), { merge: true });
+  });
+
+  it("records resume when clearing a manual or paid-AI pause state", async () => {
+    const { auditSet, repository } = auditHarness({
+      paused: false,
+      paidAiPaused: true,
+    });
+
+    await repository.updateBudget({
+      ...baseBudgetUpdate,
+      paused: false,
+    }, "allan@allanayford.me");
+
+    expect(auditSet).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      action: "resume",
+      actor: "allan@allanayford.me",
+      previousPaidAiPaused: true,
+      requestedPaused: false,
     }));
     expect(auditSet).toHaveBeenNthCalledWith(2, expect.objectContaining({
       status: "complete",
