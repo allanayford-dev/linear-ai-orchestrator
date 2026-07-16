@@ -19,6 +19,8 @@ export interface BigQueryBillingConfig {
   maximumBytesBilled: number;
 }
 
+const CANONICAL_BUDGET_CURRENCY = "USD";
+
 function scalar(value: unknown): number {
   if (typeof value === "number") return value;
   if (typeof value === "string") return Number(value);
@@ -86,9 +88,19 @@ export class BigQueryGcpBillingClient implements GcpBillingClient {
     if (!Number.isSafeInteger(costMicros) || !Number.isSafeInteger(rowCount)) {
       throw new Error("BigQuery returned invalid aggregate values");
     }
+
+    const currency = typeof row.currency === "string"
+      ? row.currency.toUpperCase()
+      : CANONICAL_BUDGET_CURRENCY;
+    if (currency !== CANONICAL_BUDGET_CURRENCY) {
+      throw new Error(
+        `Google Cloud billing currency ${currency} must be normalized to ${CANONICAL_BUDGET_CURRENCY} before aggregation`,
+      );
+    }
+
     return {
       costMicros: Math.max(0, costMicros),
-      currency: typeof row.currency === "string" ? row.currency : "USD",
+      currency,
       rowCount,
       table: this.config.table,
       projectId: this.config.projectId,
